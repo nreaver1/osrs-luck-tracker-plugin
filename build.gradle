@@ -1,0 +1,50 @@
+plugins {
+    id 'java'
+    id 'idea'
+    id 'checkstyle'
+}
+
+idea {
+    module {
+        downloadJavadoc = true
+        downloadSources = true
+    }
+}
+
+repositories {
+    mavenLocal()
+    maven {
+        url = 'https://repo.runelite.net'
+    }
+    mavenCentral()
+}
+
+def runeLiteVersion = 'latest.release'
+
+dependencies {
+    compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
+
+    compileOnly 'org.projectlombok:lombok:latest.release'
+    annotationProcessor 'org.projectlombok:lombok:latest.release'
+    testCompileOnly 'org.projectlombok:lombok:latest.release'
+    testAnnotationProcessor 'org.projectlombok:lombok:latest.release'
+
+    testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
+    testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion
+    testImplementation group: 'org.mockito', name: 'mockito-junit-jupiter', version: '4.5.1'
+    testImplementation group: 'org.junit.jupiter', name: 'junit-jupiter-api', version: '5.8.2'
+    testRuntimeOnly group: 'org.junit.jupiter', name: 'junit-jupiter-engine', version: '5.8.2'
+    testRuntimeOnly group: 'org.junit.platform', name: 'junit-platform-launcher', version: '1.8.2'
+}
+
+group = 'com.osrslucktracker'
+version = '0.1.0'
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release.set(11)
+}
+
+test {
+    useJUnitPlatform()
+}
