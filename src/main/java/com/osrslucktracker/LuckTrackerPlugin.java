@@ -75,6 +75,9 @@ public class LuckTrackerPlugin extends Plugin
     // any recent kill context and are intentionally skipped — see the
     // KNOWN LIMITATIONS note in the README.
     private static final long KILL_CONTEXT_WINDOW_MS = 5000;
+    // ApiClient doesn't report register failures back, so space out
+    // retries instead of sending a new request every tick.
+    private static final long REGISTER_RETRY_MS = 60_000;
 
     // Title of the adventure log opened in a POH ("The Exploits of X").
     private static final Pattern ADVENTURE_LOG_TITLE_PATTERN = Pattern.compile("The Exploits of (.+)");
@@ -122,6 +125,10 @@ public class LuckTrackerPlugin extends Plugin
     // account's recorded drops and the collection log layout on login.
     private String announcedAccountHash;
     private volatile String localPlayerName;
+    // Account known to have an install_token, so the per-tick
+    // registration check can stop once it's done.
+    private volatile String registeredAccountHash;
+    private long lastRegisterAttemptMs;
 
     private LuckTrackerPanel panel;
     private NavigationButton navButton;
@@ -158,6 +165,8 @@ public class LuckTrackerPlugin extends Plugin
         obtainedByPage.clear();
         scannedAccountHash = null;
         adventureLogOwner = null;
+        registeredAccountHash = null;
+        lastRegisterAttemptMs = 0;
     }
 
     @Subscribe
@@ -175,6 +184,8 @@ public class LuckTrackerPlugin extends Plugin
             case LOGIN_SCREEN:
                 announcedAccountHash = null;
                 localPlayerName = null;
+                registeredAccountHash = null;
+                lastRegisterAttemptMs = 0;
                 clearCollectionLogScan();
                 break;
             default:
@@ -187,15 +198,16 @@ public class LuckTrackerPlugin extends Plugin
     // the state transition and the local player object actually being
     // populated) — this is exactly what happened in testing: the
     // GameStateChanged-triggered attempt logged ign=null and bailed out
-    // without ever calling register(). ensureRegistered() is cheap and
-    // idempotent (it no-ops immediately once a token exists or the
-    // state/player aren't ready), so retrying every tick until it
-    // succeeds is simpler and more robust than trying to catch the
-    // exact right moment once.
+    // without ever calling register(). Retrying on each tick until the
+    // account has a token is simpler and more robust than trying to catch
+    // the exact right moment once; after that the check stops.
     @Subscribe
     public void onGameTick(GameTick event)
     {
-        ensureRegistered();
+        if (registeredAccountHash == null)
+        {
+            ensureRegistered();
+        }
         announceAccount();
 
         // The adventure log's title widget is only populated a tick after
@@ -422,7 +434,8 @@ public class LuckTrackerPlugin extends Plugin
      * Calls /register once per account (result cached in RuneLite's
      * per-profile config), so the plugin has an install_token before it
      * ever needs to submit a drop. Safe to call repeatedly — it's a
-     * no-op if a token is already stored for this account.
+     * no-op if a token is already stored for this account, and it sends
+     * at most one register request per REGISTER_RETRY_MS.
      */
     private void ensureRegistered()
     {
@@ -430,38 +443,42 @@ public class LuckTrackerPlugin extends Plugin
         {
             if (client.getGameState() != GameState.LOGGED_IN)
             {
-                log.info("[LuckTracker DEBUG] ensureRegistered: not logged in yet (state={})", client.getGameState());
                 return;
             }
 
             long accountHash = client.getAccountHash();
             if (accountHash == -1)
             {
-                log.info("[LuckTracker DEBUG] ensureRegistered: getAccountHash() returned -1 despite LOGGED_IN state");
                 return;
             }
             String hash = Long.toHexString(accountHash);
 
             String existingToken = configManager.getConfiguration("lucktracker", hash, "installToken");
-            log.info("[LuckTracker DEBUG] ensureRegistered: hash={}, existingToken={}", hash,
-                existingToken == null ? "null" : "present (" + existingToken.length() + " chars)");
             if (existingToken != null && !existingToken.isEmpty())
             {
+                registeredAccountHash = hash;
                 return;
             }
 
             String ign = client.getLocalPlayer() != null ? client.getLocalPlayer().getName() : null;
             if (ign == null)
             {
-                log.info("[LuckTracker DEBUG] ensureRegistered: local player not ready yet, will retry next tick");
                 return;
             }
-            log.info("[LuckTracker DEBUG] ensureRegistered: ign={}, calling apiClient.register()", ign);
+
+            long now = System.currentTimeMillis();
+            if (now - lastRegisterAttemptMs < REGISTER_RETRY_MS)
+            {
+                return;
+            }
+            lastRegisterAttemptMs = now;
+            log.debug("Registering {} with the Luck Tracker backend", ign);
 
             apiClient.register(hash, ign, token ->
             {
                 configManager.setConfiguration("lucktracker", hash, "installToken", token);
-                log.info("[LuckTracker DEBUG] Registered successfully, token stored for account {}", hash);
+                registeredAccountHash = hash;
+                log.info("Registered {} with the Luck Tracker backend", ign);
             });
         });
     }
@@ -556,9 +573,7 @@ public class LuckTrackerPlugin extends Plugin
     String getCurrentAccountHash()
     {
         long accountHash = client.getAccountHash();
-        String result = accountHash == -1 ? null : Long.toHexString(accountHash);
-        log.info("[LuckTracker DEBUG] getCurrentAccountHash: raw={}, result={}", accountHash, result);
-        return result;
+        return accountHash == -1 ? null : Long.toHexString(accountHash);
     }
 
     /**
@@ -573,10 +588,7 @@ public class LuckTrackerPlugin extends Plugin
         {
             return null;
         }
-        String token = configManager.getConfiguration("lucktracker", hash, "installToken");
-        log.info("[LuckTracker DEBUG] getInstallToken: hash={}, token={}", hash,
-            token == null ? "null" : "present (" + token.length() + " chars)");
-        return token;
+        return configManager.getConfiguration("lucktracker", hash, "installToken");
     }
 
     /** Snapshot of collection log pages read this session: page title -> obtained item ids. */
