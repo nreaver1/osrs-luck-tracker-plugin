@@ -114,6 +114,7 @@ public class LuckTrackerPlugin extends Plugin
     // --- Collection log import state (see readCollectionLogPage) ---
     // Written on the client thread, read by the panel on the EDT.
     private final Map<String, Set<Integer>> obtainedByPage = new ConcurrentHashMap<>();
+    private final Set<String> mismatchWarnedPages = new HashSet<>();
     private volatile CollectionLogIndex collectionLogIndex;
     private volatile boolean collectionLogIndexFailed;
     private String scannedAccountHash;
@@ -304,10 +305,19 @@ public class LuckTrackerPlugin extends Plugin
             {
                 continue;
             }
-            shown.add(child.getItemId());
+            int itemId = child.getItemId();
+            if (!expected.contains(itemId))
+            {
+                Integer sameName = expectedItemWithSameName(itemId, expected);
+                if (sameName != null)
+                {
+                    itemId = sameName;
+                }
+            }
+            shown.add(itemId);
             if (child.getOpacity() == 0)
             {
-                obtained.add(child.getItemId());
+                obtained.add(itemId);
             }
         }
 
@@ -316,7 +326,14 @@ public class LuckTrackerPlugin extends Plugin
         // than import from a page we don't understand.
         if (shown.isEmpty() || !expected.containsAll(shown))
         {
-            log.warn("Collection log page '{}' doesn't match the cache layout — not importing it", title);
+            // The page redraws constantly while open, so warn once per page.
+            if (mismatchWarnedPages.add(title))
+            {
+                Set<Integer> unexpected = new HashSet<>(shown);
+                unexpected.removeAll(expected);
+                log.warn("Collection log page '{}' doesn't match the cache layout — not importing it "
+                    + "(shown={}, expected={}, unexpected={})", title, shown, expected, unexpected);
+            }
             return;
         }
 
@@ -326,10 +343,21 @@ public class LuckTrackerPlugin extends Plugin
             scannedAccountHash = accountHash;
         }
 
-        Set<Integer> previous = obtainedByPage.put(title, Collections.unmodifiableSet(obtained));
-        if (!obtained.equals(previous))
+        // Right after switching log tabs the game can draw a page with its
+        // obtained slots still faded (Beginner Treasure Trails read 2, then
+        // 0, in one visit). The log only ever gains items, so keep
+        // everything seen obtained this session instead of letting a later
+        // read drop it.
+        Set<Integer> previous = obtainedByPage.get(title);
+        Set<Integer> merged = new HashSet<>(obtained);
+        if (previous != null)
         {
-            log.debug("Read collection log page '{}': {} obtained", title, obtained.size());
+            merged.addAll(previous);
+        }
+        if (!merged.equals(previous))
+        {
+            obtainedByPage.put(title, Collections.unmodifiableSet(merged));
+            log.debug("Read collection log page '{}': {} obtained", title, merged.size());
             notifyPanel();
         }
     }
@@ -413,9 +441,35 @@ public class LuckTrackerPlugin extends Plugin
         return matcher.find() ? matcher.group(1) : null;
     }
 
+    /**
+     * Some log slots draw a display-only copy of an item rather than the
+     * item the cache lists for that page (the Abyssal Sire page shows
+     * UNSIRED_DUMMY 25624 in place of Unsired 13273). Maps such a copy to
+     * the page's item with the same name, or null unless exactly one
+     * item on the page matches.
+     */
+    private Integer expectedItemWithSameName(int itemId, Set<Integer> expected)
+    {
+        String name = client.getItemDefinition(itemId).getName();
+        Integer match = null;
+        for (int candidate : expected)
+        {
+            if (client.getItemDefinition(candidate).getName().equalsIgnoreCase(name))
+            {
+                if (match != null)
+                {
+                    return null;
+                }
+                match = candidate;
+            }
+        }
+        return match;
+    }
+
     private void clearCollectionLogScan()
     {
         obtainedByPage.clear();
+        mismatchWarnedPages.clear();
         scannedAccountHash = null;
         adventureLogOwner = null;
         notifyPanel();
