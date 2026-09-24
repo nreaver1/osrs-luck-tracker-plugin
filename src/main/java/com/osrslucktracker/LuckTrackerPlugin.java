@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -58,10 +59,6 @@ import java.util.regex.Pattern;
 )
 public class LuckTrackerPlugin extends Plugin
 {
-    // Matches game messages like "Your Zulrah kill count is: 127."
-    private static final Pattern KILL_COUNT_PATTERN =
-        Pattern.compile("Your (.+?) kill count is: ([0-9,]+)\\.");
-
     // Matches the collection log popup message:
     // "New item added to your collection log: Twisted bow"
     private static final Pattern COLLECTION_LOG_PATTERN =
@@ -75,6 +72,11 @@ public class LuckTrackerPlugin extends Plugin
     // any recent kill context and are intentionally skipped — see the
     // KNOWN LIMITATIONS note in the README.
     private static final long KILL_CONTEXT_WINDOW_MS = 5000;
+    // Raid uniques arrive when the player loots the reward chest, which
+    // can be well after the completion-count message. A later kill-count
+    // message replaces the context, and the server rejects any item that
+    // has no drop rate from the raid.
+    private static final long RAID_CONTEXT_WINDOW_MS = 10 * 60_000;
     // ApiClient doesn't report register failures back, so space out
     // retries instead of sending a new request every tick.
     private static final long REGISTER_RETRY_MS = 60_000;
@@ -110,6 +112,7 @@ public class LuckTrackerPlugin extends Plugin
     private final Map<String, Integer> bossKillCounts = new HashMap<>();
     private String lastKillSource = null;
     private long lastKillTimestampMs = 0;
+    private long lastKillWindowMs = KILL_CONTEXT_WINDOW_MS;
 
     // --- Collection log import state (see readCollectionLogPage) ---
     // Written on the client thread, read by the panel on the EDT.
@@ -547,18 +550,17 @@ public class LuckTrackerPlugin extends Plugin
 
         String message = event.getMessage();
 
-        Matcher killMatcher = KILL_COUNT_PATTERN.matcher(message);
-        if (killMatcher.find())
+        KillCountMessage killCount = KillCountMessage.parse(message);
+        if (killCount != null)
         {
-            String boss = killMatcher.group(1);
-            int kc = Integer.parseInt(killMatcher.group(2).replace(",", ""));
-            bossKillCounts.put(boss, kc);
-            lastKillSource = boss;
+            bossKillCounts.put(killCount.source, killCount.kc);
+            lastKillSource = killCount.source;
             lastKillTimestampMs = System.currentTimeMillis();
+            lastKillWindowMs = killCount.isRaid() ? RAID_CONTEXT_WINDOW_MS : KILL_CONTEXT_WINDOW_MS;
             return;
         }
 
-        Matcher dropMatcher = COLLECTION_LOG_PATTERN.matcher(message);
+        Matcher dropMatcher = COLLECTION_LOG_PATTERN.matcher(Text.removeTags(message));
         if (dropMatcher.find())
         {
             handleCollectionLogDrop(dropMatcher.group(1).trim());
@@ -568,12 +570,12 @@ public class LuckTrackerPlugin extends Plugin
     private void handleCollectionLogDrop(String itemName)
     {
         long now = System.currentTimeMillis();
-        if (lastKillSource == null || now - lastKillTimestampMs > KILL_CONTEXT_WINDOW_MS)
+        if (lastKillSource == null || now - lastKillTimestampMs > lastKillWindowMs)
         {
             log.debug(
-                "Collection log drop '{}' had no recent boss-kill context within {}ms — "
+                "Collection log drop '{}' had no recent boss-kill context — "
                     + "skipping (likely a non-boss source this plugin doesn't track yet)",
-                itemName, KILL_CONTEXT_WINDOW_MS
+                itemName
             );
             return;
         }
@@ -586,12 +588,59 @@ public class LuckTrackerPlugin extends Plugin
 
         String sourceName = lastKillSource;
 
-        itemManager.search(itemName).stream()
+        Integer itemId = resolveItemId(itemName, sourceName);
+        if (itemId == null)
+        {
+            log.warn("Could not resolve item id for '{}' — skipping submission", itemName);
+            return;
+        }
+        submitDrop(itemId, sourceName, kcAtDrop);
+    }
+
+    /**
+     * Looks the name up among the collection log's own items first, since
+     * itemManager.search() only knows tradeable items and would miss pets
+     * and untradeables like the thread of Elidinis. When several log items
+     * share the name, the one on the source's log page wins.
+     */
+    private Integer resolveItemId(String itemName, String sourceName)
+    {
+        CollectionLogIndex index = getCollectionLogIndex();
+        if (index != null)
+        {
+            Set<Integer> matches = new TreeSet<>();
+            for (int id : index.allItemIds())
+            {
+                if (client.getItemDefinition(id).getName().equalsIgnoreCase(itemName))
+                {
+                    matches.add(id);
+                }
+            }
+            if (matches.size() == 1)
+            {
+                return matches.iterator().next();
+            }
+            // Mode variants share one page: "Tombs of Amascut: Expert Mode"
+            // drops are listed on "Tombs of Amascut".
+            String source = BackfillPlanner.normalize(sourceName);
+            Set<Integer> onSourcePage = new TreeSet<>();
+            for (int id : matches)
+            {
+                if (index.pagesFor(id).stream().anyMatch(page -> source.startsWith(BackfillPlanner.normalize(page))))
+                {
+                    onSourcePage.add(id);
+                }
+            }
+            if (onSourcePage.size() == 1)
+            {
+                return onSourcePage.iterator().next();
+            }
+        }
+
+        return itemManager.search(itemName).stream()
             .findFirst()
-            .ifPresentOrElse(
-                itemPrice -> submitDrop(itemPrice.getId(), sourceName, kcAtDrop),
-                () -> log.warn("Could not resolve item id for '{}' — skipping submission", itemName)
-            );
+            .map(itemPrice -> itemPrice.getId())
+            .orElse(null);
     }
 
     private void submitDrop(int itemId, String sourceName, int kcReceived)

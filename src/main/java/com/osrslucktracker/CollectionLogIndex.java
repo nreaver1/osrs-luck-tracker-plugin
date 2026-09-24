@@ -125,6 +125,12 @@ final class CollectionLogIndex
         return pagesByItem.getOrDefault(itemId, Collections.emptySet());
     }
 
+    /** Every item on any page. */
+    Set<Integer> allItemIds()
+    {
+        return pagesByItem.keySet();
+    }
+
     Set<String> pageNames()
     {
         return itemsByPage.keySet();

@@ -9,11 +9,16 @@ in this build.
 1. On login, calls `/register` once per account (result cached locally),
    getting back an `install_token`.
 2. Watches chat for kill-count messages ("Your Zulrah kill count is:
-   127.") to track current KC per boss.
+   127.", "Your completed Tombs of Amascut: Expert Mode count is: 12.")
+   to track current KC per boss or raid. `KillCountMessage` strips the
+   colour tags the game puts around the number first.
 3. Watches chat for the collection log popup message ("New item added
    to your collection log: X") and, if it happened within 5 seconds of
-   a kill-count message, resolves the item name to an item ID and
-   calls `/ingest-drop` with the item, source, and KC at the time.
+   a kill-count message (10 minutes after a raid completion, since raid
+   loot is claimed from the chest later), resolves the item name to an
+   item ID and calls `/ingest-drop` with the item, source, and KC at the
+   time. Names are matched against the collection log's own items first,
+   because `itemManager.search()` only knows tradeable items.
 4. Imports items the player already had before installing the plugin.
    The player opens their collection log in-game and clicks through the
    pages the side panel lists; each page is read as it opens, and the
@@ -55,7 +60,7 @@ on anything fragile, and fails closed when something does change:
   adventure log in a POH is ignored. The owner is detected the same way
   as in RuneLite's Chat Commands plugin.
 
-`BackfillPlanner` is pure logic with unit tests:
+`BackfillPlanner` and `KillCountMessage` are pure logic with unit tests:
 `./gradlew test --tests com.osrslucktracker.BackfillPlannerTest`.
 
 ## What I could and couldn't verify
@@ -129,10 +134,13 @@ In RuneLite's plugin settings, fill in:
   needed.
 - **Shared items can't be imported automatically** (see above). Add them
   with the single-item dropdown if you know which boss they came from.
-- **Item name → ID resolution uses `itemManager.search()` at runtime**,
-  which does a live lookup rather than using the same offline dataset
-  the backend's wiki-sync script uses. For most items this should
-  resolve fine, but any name mismatch between the chat message text and
-  RuneLite's item search index would cause that specific drop to be
-  silently skipped (logged as a warning) rather than submitted with a
-  guessed ID.
+- **Item name → ID resolution** matches the chat message's item name
+  against the collection log's own items, then falls back to
+  `itemManager.search()` (tradeables only). A name that matches nothing,
+  or several log items on different pages, is skipped with a warning
+  rather than submitted with a guessed ID.
+- **Raid estimates assume a typical raid.** Raid uniques are stored as
+  `points_based` rates with an assumed points total or team size (see
+  the `assumption` note on each row in
+  `osrs-luck-database/data/manual_drop_rates.json`), because the plugin
+  doesn't read your actual raid points. Entry modes aren't tracked.
