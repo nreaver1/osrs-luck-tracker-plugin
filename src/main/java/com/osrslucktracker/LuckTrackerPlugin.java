@@ -85,6 +85,9 @@ public class LuckTrackerPlugin extends Plugin
     // ApiClient doesn't report register failures back, so space out
     // retries instead of sending a new request every tick.
     private static final long REGISTER_RETRY_MS = 60_000;
+    // Per-account config key: the IGN the backend last accepted for this
+    // account, so a name change can be sent to /register.
+    private static final String REGISTERED_IGN_KEY = "registeredIgn";
 
     // Title of the adventure log opened in a POH ("The Exploits of X").
     private static final Pattern ADVENTURE_LOG_TITLE_PATTERN = Pattern.compile("The Exploits of (.+)");
@@ -536,9 +539,12 @@ public class LuckTrackerPlugin extends Plugin
     /**
      * Calls /register once per account (result cached in RuneLite's
      * per-profile config), so the plugin has an install_token before it
-     * ever needs to submit a drop. Safe to call repeatedly — it's a
-     * no-op if a token is already stored for this account, and it sends
-     * at most one register request per REGISTER_RETRY_MS.
+     * ever needs to submit a drop. Also calls it again, with the stored
+     * token, when the account's IGN has changed since the backend last
+     * saw it, so profile lookups by name find the renamed account. Safe
+     * to call repeatedly — it's a no-op once the token and IGN are both
+     * current, and it sends at most one register request per
+     * REGISTER_RETRY_MS.
      */
     private void ensureRegistered()
     {
@@ -557,15 +563,17 @@ public class LuckTrackerPlugin extends Plugin
             String hash = Long.toHexString(accountHash);
 
             String existingToken = configManager.getConfiguration("lucktracker", hash, "installToken");
-            if (existingToken != null && !existingToken.isEmpty())
-            {
-                registeredAccountHash = hash;
-                return;
-            }
+            boolean hasToken = existingToken != null && !existingToken.isEmpty();
 
             String ign = client.getLocalPlayer() != null ? client.getLocalPlayer().getName() : null;
             if (ign == null)
             {
+                return;
+            }
+
+            if (hasToken && ign.equals(configManager.getConfiguration("lucktracker", hash, REGISTERED_IGN_KEY)))
+            {
+                registeredAccountHash = hash;
                 return;
             }
 
@@ -577,9 +585,10 @@ public class LuckTrackerPlugin extends Plugin
             lastRegisterAttemptMs = now;
             log.debug("Registering {} with the Luck Tracker backend", ign);
 
-            apiClient.register(hash, ign, token ->
+            apiClient.register(hash, ign, hasToken ? existingToken : null, token ->
             {
                 configManager.setConfiguration("lucktracker", hash, "installToken", token);
+                configManager.setConfiguration("lucktracker", hash, REGISTERED_IGN_KEY, ign);
                 registeredAccountHash = hash;
                 log.info("Registered {} with the Luck Tracker backend", ign);
             });

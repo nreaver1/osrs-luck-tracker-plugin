@@ -37,7 +37,12 @@ class ApiClient
         this.config = config;
     }
 
-    void register(String accountHash, String ign, Consumer<String> onToken)
+    /**
+     * Mints a token for a new account, or, when {@code installToken} is
+     * the account's current token, updates its IGN and returns the same
+     * token. Without a valid token an existing account gets a 409.
+     */
+    void register(String accountHash, String ign, String installToken, Consumer<String> onToken)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -45,7 +50,7 @@ class ApiClient
             return;
         }
 
-        RegisterRequest body = new RegisterRequest(accountHash, ign);
+        RegisterRequest body = new RegisterRequest(accountHash, ign, installToken);
         Request request = new Request.Builder()
             .url(config.apiBaseUrl() + "/register")
             .header("apikey", config.publishableKey())
@@ -65,6 +70,13 @@ class ApiClient
             {
                 try (Response r = response)
                 {
+                    if (r.code() == 409)
+                    {
+                        // The server only hands out a token when it creates the
+                        // account, so a lost local token can't be recovered here.
+                        log.warn("This account is already registered and the stored install token (if any) was not accepted; drops will not be submitted");
+                        return;
+                    }
                     if (!r.isSuccessful() || r.body() == null)
                     {
                         log.warn("Register call returned HTTP {}", r.code());

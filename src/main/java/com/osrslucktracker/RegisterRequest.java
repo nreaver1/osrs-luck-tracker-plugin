@@ -9,9 +9,14 @@ class RegisterRequest
 
     final String ign;
 
-    RegisterRequest(String accountHash, String ign)
+    // Null for a first registration; Gson leaves it out of the body.
+    @SerializedName("install_token")
+    final String installToken;
+
+    RegisterRequest(String accountHash, String ign, String installToken)
     {
         this.accountHash = accountHash;
         this.ign = ign;
+        this.installToken = installToken;
     }
 }
