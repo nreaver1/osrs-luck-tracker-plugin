@@ -1,5 +1,8 @@
 package com.osrslucktracker;
 
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import com.google.gson.reflect.TypeToken;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.ChatMessageType;
@@ -27,11 +30,13 @@ import net.runelite.client.util.Text;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
+import java.lang.reflect.Type;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -108,6 +113,15 @@ public class LuckTrackerPlugin extends Plugin
 
     @Inject
     private ApiClient apiClient;
+
+    @Inject
+    private Gson gson;
+
+    // Per-account config key holding the log pages read so far (page ->
+    // obtained item ids), so an import survives logout and the panel
+    // doesn't ask for pages the player already opened.
+    private static final String READ_LOG_PAGES_KEY = "readLogPages";
+    private static final Type READ_LOG_PAGES_TYPE = new TypeToken<Map<String, Set<Integer>>>() {}.getType();
 
     private final Map<String, Integer> bossKillCounts = new HashMap<>();
     private String lastKillSource = null;
@@ -342,8 +356,7 @@ public class LuckTrackerPlugin extends Plugin
 
         if (!accountHash.equals(scannedAccountHash))
         {
-            obtainedByPage.clear();
-            scannedAccountHash = accountHash;
+            loadReadPages(accountHash);
         }
 
         // Right after switching log tabs the game can draw a page with its
@@ -361,6 +374,7 @@ public class LuckTrackerPlugin extends Plugin
         {
             obtainedByPage.put(title, Collections.unmodifiableSet(merged));
             log.debug("Read collection log page '{}': {} obtained", title, merged.size());
+            saveReadPages(accountHash);
             notifyPanel();
         }
     }
@@ -390,7 +404,39 @@ public class LuckTrackerPlugin extends Plugin
         announcedAccountHash = hash;
         localPlayerName = name;
         getCollectionLogIndex();
+        loadReadPages(hash);
         notifyPanel();
+    }
+
+    /** Restores the pages this account read in earlier sessions. */
+    private void loadReadPages(String accountHash)
+    {
+        obtainedByPage.clear();
+        scannedAccountHash = accountHash;
+        String json = configManager.getConfiguration("lucktracker", accountHash, READ_LOG_PAGES_KEY);
+        if (json == null || json.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            Map<String, Set<Integer>> saved = gson.fromJson(json, READ_LOG_PAGES_TYPE);
+            if (saved != null)
+            {
+                saved.forEach((page, ids) -> obtainedByPage.put(page, Collections.unmodifiableSet(new HashSet<>(ids))));
+            }
+        }
+        catch (JsonSyntaxException e)
+        {
+            log.warn("Ignoring unreadable saved collection log pages", e);
+        }
+    }
+
+    private void saveReadPages(String accountHash)
+    {
+        Map<String, Set<Integer>> sorted = new TreeMap<>();
+        obtainedByPage.forEach((page, ids) -> sorted.put(page, new TreeSet<>(ids)));
+        configManager.setConfiguration("lucktracker", accountHash, READ_LOG_PAGES_KEY, gson.toJson(sorted));
     }
 
     /** Built once per session on the client thread; null if the cache layout is unrecognised. */

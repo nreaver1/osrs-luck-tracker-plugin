@@ -42,7 +42,12 @@ on anything fragile, and fails closed when something does change:
   built-in Chat Commands plugin reads the "All Pets" page exactly the
   same way, so RuneLite itself keeps this hook working. Only pages the
   player opens are read; the plugin never opens the log or clicks
-  through it.
+  through it. What each page showed is saved per account in RuneLite's
+  config (`readLogPages`), so it's a one-time job: later logins start
+  from the saved pages, and items that gain a drop rate later become
+  importable without reopening anything. New drops are tracked live
+  from chat, so a page only needs reopening for items obtained while
+  the plugin wasn't running.
 - **Shared items.** The log fills a slot on *every* page that lists the
   item, whoever dropped it: a Godsword shard from Kree'arra shows on all
   four GWD pages. So an obtained slot only proves its source when no
