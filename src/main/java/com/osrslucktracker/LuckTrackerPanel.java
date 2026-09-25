@@ -377,8 +377,8 @@ class LuckTrackerPanel extends PluginPanel
         if (!plan.shared.isEmpty())
         {
             summary.append("<br><br>").append(plan.shared.size())
-                .append(" shared item(s) skipped &mdash; they appear on several log pages, so the page "
-                    + "doesn't prove which boss dropped them:");
+                .append(" shared item(s) skipped &mdash; several bosses drop them and the log fills every "
+                    + "boss's page, so it doesn't prove which one dropped yours. Add them manually below:");
             for (BackfillPlanner.Candidate c : plan.shared)
             {
                 summary.append("<br>&bull; ").append(displayName(c));

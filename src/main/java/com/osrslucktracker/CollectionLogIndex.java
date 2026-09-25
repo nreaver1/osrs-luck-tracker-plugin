@@ -20,9 +20,9 @@ import java.util.Set;
  * log fills a slot on EVERY page that lists the item, no matter which
  * source actually dropped it — a Godsword shard from Kree'arra also
  * shows as obtained on the Graardor, K'ril and Zilyana pages. So an
- * obtained slot only proves the source when the item appears on exactly
- * one page, and we need the full page list (not just the pages the
- * player happened to open) to know that.
+ * obtained slot only proves the source when no other drop source's page
+ * lists the item, and we need the full page list (not just the pages
+ * the player happened to open) to know that.
  *
  * The IDs below are not exposed by RuneLite; they match what the
  * Collection Log plugin-hub plugin (evansloan / osrsclog) uses. If a

@@ -86,6 +86,37 @@ class BackfillPlannerTest
     }
 
     @Test
+    void petOnItsBossPageAndAllPetsIsReady()
+    {
+        // "All Pets" lists every pet but isn't a drop source, so it doesn't make the pet shared.
+        List<CatalogEntry> withPet = Arrays.asList(
+            entry(PET_SNAKELING, "Zulrah"),
+            entry(TANZANITE_FANG, "Zulrah")
+        );
+
+        BackfillPlanner.Plan plan = BackfillPlanner.plan(
+            withPet,
+            pages("Zulrah", set(PET_SNAKELING), "All Pets", set(PET_SNAKELING)),
+            index,
+            Collections.emptySet());
+
+        assertEquals(keys(PET_SNAKELING + "|Zulrah"), keysOf(plan.ready));
+        assertTrue(plan.shared.isEmpty());
+    }
+
+    @Test
+    void itemOnAnotherPageWithoutARateThereIsReady()
+    {
+        // Only Graardor has a rate for the shard here, so Kree'arra's page doesn't compete.
+        List<CatalogEntry> graardorOnly = Collections.singletonList(entry(GODSWORD_SHARD_1, "General Graardor"));
+
+        BackfillPlanner.Plan plan = BackfillPlanner.plan(
+            graardorOnly, pages("General Graardor", set(GODSWORD_SHARD_1)), index, Collections.emptySet());
+
+        assertEquals(keys(GODSWORD_SHARD_1 + "|General Graardor"), keysOf(plan.ready));
+    }
+
+    @Test
     void alreadySentItemsAreHidden()
     {
         BackfillPlanner.Plan plan = BackfillPlanner.plan(

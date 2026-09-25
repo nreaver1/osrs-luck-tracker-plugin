@@ -22,8 +22,10 @@ import java.util.TreeSet;
  *  - P matches a source in the drop-rate catalog (we only track luck for
  *    catalog sources),
  *  - the catalog has a rate for that item from that source, and
- *  - the item appears on exactly one collection log page, so P is
- *    provably where it came from (see {@link CollectionLogIndex}).
+ *  - no other log page that is a catalog source with a rate for the
+ *    item also lists it, so P is provably where it came from (see
+ *    {@link CollectionLogIndex}). Pages that aren't a drop source, like
+ *    "All Pets", don't count: a pet is still attributable to its boss.
  * Obtained catalog items that fail only the last check are reported as
  * shared, so the panel can point the player at the manual dropdown.
  */
@@ -75,7 +77,7 @@ final class BackfillPlanner
     {
         /** Safe to import: single-page items from a catalog source. */
         final List<Candidate> ready = new ArrayList<>();
-        /** Obtained catalog items that appear on several pages — source unknown. */
+        /** Obtained catalog items that several rated sources' pages list — source unknown. */
         final List<Candidate> shared = new ArrayList<>();
         /** Catalog sources with a log page the player hasn't opened yet. */
         final Set<String> pagesToOpen = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
@@ -138,7 +140,7 @@ final class BackfillPlanner
                 {
                     continue;
                 }
-                if (index.pagesFor(itemId).size() == 1)
+                if (ratedPagesFor(itemId, index, sourceByNormalizedName, catalogBySource) == 1)
                 {
                     plan.ready.add(candidate);
                 }
@@ -150,6 +152,19 @@ final class BackfillPlanner
         }
 
         return plan;
+    }
+
+    /** How many of the item's log pages belong to a catalog source that rates it. */
+    private static long ratedPagesFor(
+        int itemId,
+        CollectionLogIndex index,
+        Map<String, String> sourceByNormalizedName,
+        Map<String, Set<Integer>> catalogBySource)
+    {
+        return index.pagesFor(itemId).stream()
+            .map(p -> sourceByNormalizedName.get(normalize(p)))
+            .filter(s -> s != null && catalogBySource.get(s).contains(itemId))
+            .count();
     }
 
     /** True if the item is a collection log slot on the page for this catalog source. */

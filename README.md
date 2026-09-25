@@ -45,12 +45,15 @@ on anything fragile, and fails closed when something does change:
   through it.
 - **Shared items.** The log fills a slot on *every* page that lists the
   item, whoever dropped it: a Godsword shard from Kree'arra shows on all
-  four GWD pages. So an obtained slot only proves its source when the
-  item appears on exactly one page. `CollectionLogIndex` reads the full
+  four GWD pages. So an obtained slot only proves its source when no
+  other drop source's page lists it. `CollectionLogIndex` reads the full
   page/item layout from the game cache (tab structs 471–475, params
-  683/689/690, the same IDs the Collection Log plugin-hub plugin uses),
-  and `BackfillPlanner` only offers single-page items. Shared items are
-  listed as skipped and can be added one at a time from the dropdown.
+  683/689/690, the same IDs the Collection Log plugin-hub plugin uses).
+  `BackfillPlanner` only offers items that exactly one catalog source
+  with a rate for them lists. Pages that aren't a source, like "All
+  Pets", don't count, so boss pets import normally. Items several
+  sources drop (godsword shards, Dragon pickaxe, Virtus) are listed as
+  skipped and can be added one at a time from the dropdown.
 - **Failing closed.** If the cache layout isn't recognised, import is
   disabled with a message. If a drawn page doesn't match its cache
   entry, that page is skipped. Only (item, source) pairs from the
