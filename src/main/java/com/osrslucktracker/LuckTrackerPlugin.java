@@ -394,7 +394,7 @@ public class LuckTrackerPlugin extends Plugin
             return;
         }
         long accountHash = client.getAccountHash();
-        String name = client.getLocalPlayer().getName();
+        String name = playerName();
         if (accountHash == -1 || name == null)
         {
             return;
@@ -565,7 +565,7 @@ public class LuckTrackerPlugin extends Plugin
             String existingToken = configManager.getConfiguration("lucktracker", hash, "installToken");
             boolean hasToken = existingToken != null && !existingToken.isEmpty();
 
-            String ign = client.getLocalPlayer() != null ? client.getLocalPlayer().getName() : null;
+            String ign = playerName();
             if (ign == null)
             {
                 return;
@@ -759,6 +759,23 @@ public class LuckTrackerPlugin extends Plugin
     CollectionLogIndex getLoadedCollectionLogIndex()
     {
         return collectionLogIndex;
+    }
+
+    /**
+     * The local player's name in the form the backend stores: the game can
+     * report spaces as non-breaking spaces, and OSRS treats space, "_" and
+     * "-" in a name as the same character, so all of them become a space
+     * (Text.toJagexName). Null when there is no local player yet.
+     */
+    private String playerName()
+    {
+        String raw = client.getLocalPlayer() != null ? client.getLocalPlayer().getName() : null;
+        if (raw == null)
+        {
+            return null;
+        }
+        String name = Text.toJagexName(raw);
+        return name.isEmpty() ? null : name;
     }
 
     /** Name of the logged-in player, or null before the first tick after login. */
