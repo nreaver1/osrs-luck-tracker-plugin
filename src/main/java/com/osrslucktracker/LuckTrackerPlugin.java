@@ -609,6 +609,13 @@ public class LuckTrackerPlugin extends Plugin
         if (killCount != null)
         {
             bossKillCounts.put(killCount.source, killCount.kc);
+            LuckTrackerPanel p = panel;
+            if (p != null)
+            {
+                // Snapshot here: the map is only touched on the client thread, the panel reads it on the EDT.
+                Map<String, Integer> snapshot = new TreeMap<>(bossKillCounts);
+                SwingUtilities.invokeLater(() -> p.showBossKillCounts(snapshot));
+            }
             lastKillSource = killCount.source;
             lastKillTimestampMs = System.currentTimeMillis();
             lastKillWindowMs = killCount.isRaid() ? RAID_CONTEXT_WINDOW_MS : KILL_CONTEXT_WINDOW_MS;
@@ -716,11 +723,6 @@ public class LuckTrackerPlugin extends Plugin
 
         Integer currentKc = bossKillCounts.get(sourceName);
         apiClient.ingestDrop(token, hash, itemId, sourceName, kcReceived, currentKc != null ? currentKc : kcReceived);
-    }
-
-    Map<String, Integer> getBossKillCounts()
-    {
-        return bossKillCounts;
     }
 
     /**

@@ -38,6 +38,7 @@ class LuckTrackerPanel extends PluginPanel
     private final ClientThread clientThread;
 
     private final JLabel statusLabel;
+    private final JLabel bossKcLabel;
     private final JLabel importSummary;
     private final JLabel importPages;
     private final JButton importButton;
@@ -83,12 +84,9 @@ class LuckTrackerPanel extends PluginPanel
 
         content.add(Box.createVerticalStrut(8));
 
-        JButton refreshButton = new JButton("Show tracked boss KCs");
-        refreshButton.setAlignmentX(Component.CENTER_ALIGNMENT);
-        refreshButton.addActionListener(e ->
-            statusLabel.setText(plugin.getBossKillCounts().size() + " boss KC(s) tracked this session")
-        );
-        content.add(refreshButton);
+        bossKcLabel = new JLabel("No boss kills tracked yet this session.");
+        bossKcLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        content.add(bossKcLabel);
 
         content.add(Box.createVerticalStrut(16));
 
@@ -210,6 +208,17 @@ class LuckTrackerPanel extends PluginPanel
         {
             return "Item #" + itemId;
         }
+    }
+
+    /** Runs on the EDT; the plugin calls it after each kill-count message. */
+    void showBossKillCounts(Map<String, Integer> counts)
+    {
+        StringBuilder text = new StringBuilder("<html>Boss KCs this session:");
+        for (Map.Entry<String, Integer> entry : counts.entrySet())
+        {
+            text.append("<br>&bull; ").append(entry.getKey()).append(": ").append(entry.getValue());
+        }
+        bossKcLabel.setText(text.append("</html>").toString());
     }
 
     /**
