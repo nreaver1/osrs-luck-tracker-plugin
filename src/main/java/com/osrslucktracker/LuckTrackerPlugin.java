@@ -5,7 +5,6 @@ import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.ScriptID;
@@ -13,8 +12,10 @@ import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ScriptPostFired;
+import net.runelite.api.events.ScriptPreFired;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
@@ -64,19 +65,16 @@ import java.util.regex.Pattern;
 )
 public class LuckTrackerPlugin extends Plugin
 {
-    // Matches the collection log popup message:
-    // "New item added to your collection log: Twisted bow"
-    private static final Pattern COLLECTION_LOG_PATTERN =
-        Pattern.compile("New item added to your collection log: (.+)");
-
     // How long after a kill-count message we'll still attribute a
-    // collection log drop to that kill. In practice both messages fire
-    // on the same game tick as the kill, so this is a generous margin,
-    // not a tight coupling. Drops from non-boss sources (clues, skilling,
+    // collection log drop to that kill. Loot that lands on the floor only
+    // enters the log when it's picked up, which can be well after the
+    // kill-count message, so this is a generous margin; the server rejects
+    // any item with no drop rate from the boss, so a stray non-boss item
+    // can't be misattributed. Drops from non-boss sources (clues, skilling,
     // minigames that don't print a "kill count" message) will not match
     // any recent kill context and are intentionally skipped — see the
     // KNOWN LIMITATIONS note in the README.
-    private static final long KILL_CONTEXT_WINDOW_MS = 5000;
+    private static final long KILL_CONTEXT_WINDOW_MS = 60_000;
     // Raid uniques arrive when the player loots the reward chest, which
     // can be well after the completion-count message. A later kill-count
     // message replaces the context, and the server rejects any item that
@@ -130,6 +128,15 @@ public class LuckTrackerPlugin extends Plugin
     private String lastKillSource = null;
     private long lastKillTimestampMs = 0;
     private long lastKillWindowMs = KILL_CONTEXT_WINDOW_MS;
+
+    // A player with both the chat and popup notification on gets each
+    // drop twice; the second one within DUPLICATE_DROP_MS is ignored.
+    private static final long DUPLICATE_DROP_MS = 10_000;
+    private String lastDropItem = null;
+    private long lastDropTimestampMs = 0;
+    // Set by the popup's start script; its delay script runs once the
+    // title and body varcs hold the text (same as RuneLite's screenshot plugin).
+    private boolean notificationStarted = false;
 
     // --- Collection log import state (see readCollectionLogPage) ---
     // Written on the client thread, read by the panel on the EDT.
@@ -270,6 +277,30 @@ public class LuckTrackerPlugin extends Plugin
         if (event.getScriptId() == ScriptID.COLLECTION_DRAW_LIST)
         {
             readCollectionLogPage();
+        }
+    }
+
+    @Subscribe
+    public void onScriptPreFired(ScriptPreFired event)
+    {
+        if (event.getScriptId() == ScriptID.NOTIFICATION_START)
+        {
+            notificationStarted = true;
+            return;
+        }
+        if (event.getScriptId() != ScriptID.NOTIFICATION_DELAY || !notificationStarted)
+        {
+            return;
+        }
+        notificationStarted = false;
+
+        String itemName = CollectionLogMessage.parsePopupItemName(
+            client.getVarcStrValue(VarClientID.NOTIFICATION_TITLE),
+            client.getVarcStrValue(VarClientID.NOTIFICATION_MAIN));
+        if (itemName != null)
+        {
+            log.info("Collection log drop '{}' seen (popup)", itemName);
+            handleCollectionLogDrop(itemName);
         }
     }
 
@@ -598,7 +629,7 @@ public class LuckTrackerPlugin extends Plugin
     @Subscribe
     public void onChatMessage(ChatMessage event)
     {
-        if (event.getType() != ChatMessageType.GAMEMESSAGE)
+        if (!CollectionLogMessage.isGameMessageType(event.getType()))
         {
             return;
         }
@@ -622,22 +653,33 @@ public class LuckTrackerPlugin extends Plugin
             return;
         }
 
-        Matcher dropMatcher = COLLECTION_LOG_PATTERN.matcher(Text.removeTags(message));
-        if (dropMatcher.find())
+        String itemName = CollectionLogMessage.parseItemName(message);
+        if (itemName != null)
         {
-            handleCollectionLogDrop(dropMatcher.group(1).trim());
+            log.info("Collection log drop '{}' seen ({} message)", itemName, event.getType());
+            handleCollectionLogDrop(itemName);
         }
     }
 
     private void handleCollectionLogDrop(String itemName)
     {
+        // Skips are logged at info: a drop lost here is lost for good, and
+        // debug output is hidden in a normal client.
         long now = System.currentTimeMillis();
+        if (itemName.equalsIgnoreCase(lastDropItem) && now - lastDropTimestampMs <= DUPLICATE_DROP_MS)
+        {
+            log.info("Collection log drop '{}' already handled from the other notification — ignoring", itemName);
+            return;
+        }
+        lastDropItem = itemName;
+        lastDropTimestampMs = now;
+
         if (lastKillSource == null || now - lastKillTimestampMs > lastKillWindowMs)
         {
-            log.debug(
-                "Collection log drop '{}' had no recent boss-kill context — "
+            log.info(
+                "Collection log drop '{}' had no recent boss-kill context (last kill: {}, {} ms ago) — "
                     + "skipping (likely a non-boss source this plugin doesn't track yet)",
-                itemName
+                itemName, lastKillSource, lastKillSource == null ? -1 : now - lastKillTimestampMs
             );
             return;
         }
@@ -645,6 +687,7 @@ public class LuckTrackerPlugin extends Plugin
         Integer kcAtDrop = bossKillCounts.get(lastKillSource);
         if (kcAtDrop == null)
         {
+            log.info("Collection log drop '{}' skipped: no kill count stored for {}", itemName, lastKillSource);
             return;
         }
 
@@ -710,6 +753,7 @@ public class LuckTrackerPlugin extends Plugin
         long accountHash = client.getAccountHash();
         if (accountHash == -1)
         {
+            log.info("Drop for item {} skipped: no account hash (not logged in?)", itemId);
             return;
         }
         String hash = Long.toHexString(accountHash);

@@ -13,7 +13,7 @@ in this build.
    to track current KC per boss or raid. `KillCountMessage` strips the
    colour tags the game puts around the number first.
 3. Watches chat for the collection log popup message ("New item added
-   to your collection log: X") and, if it happened within 5 seconds of
+   to your collection log: X") and, if it happened within 60 seconds of
    a kill-count message (10 minutes after a raid completion, since raid
    loot is claimed from the chest later), resolves the item name to an
    item ID and calls `/ingest-drop` with the item, source, and KC at the
