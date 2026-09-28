@@ -32,9 +32,11 @@ import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -128,6 +130,8 @@ public class LuckTrackerPlugin extends Plugin
     private final Map<String, Integer> bossKillCounts = new HashMap<>();
     // Kills seen since login, for the panel; one kill-count message is one kill.
     private final Map<String, Integer> sessionKillCounts = new HashMap<>();
+    // New collection log slots since login, by the source they were credited to.
+    private final Map<String, List<String>> sessionLogSlots = new HashMap<>();
     private String lastKillSource = null;
     private long lastKillTimestampMs = 0;
     private long lastKillWindowMs = KILL_CONTEXT_WINDOW_MS;
@@ -193,6 +197,7 @@ public class LuckTrackerPlugin extends Plugin
         clientToolbar.removeNavigation(navButton);
         bossKillCounts.clear();
         sessionKillCounts.clear();
+        sessionLogSlots.clear();
         lastKillSource = null;
         obtainedByPage.clear();
         scannedAccountHash = null;
@@ -633,11 +638,12 @@ public class LuckTrackerPlugin extends Plugin
 
     private void resetSessionKillCounts()
     {
-        if (sessionKillCounts.isEmpty())
+        if (sessionKillCounts.isEmpty() && sessionLogSlots.isEmpty())
         {
             return;
         }
         sessionKillCounts.clear();
+        sessionLogSlots.clear();
         showSessionKillCounts();
     }
 
@@ -647,8 +653,10 @@ public class LuckTrackerPlugin extends Plugin
         if (p != null)
         {
             // Snapshot here: the map is only touched on the client thread, the panel reads it on the EDT.
-            Map<String, Integer> snapshot = new TreeMap<>(sessionKillCounts);
-            SwingUtilities.invokeLater(() -> p.showBossKillCounts(snapshot));
+            Map<String, Integer> kills = new TreeMap<>(sessionKillCounts);
+            Map<String, List<String>> slots = new HashMap<>();
+            sessionLogSlots.forEach((source, items) -> slots.put(source, new ArrayList<>(items)));
+            SwingUtilities.invokeLater(() -> p.showBossKillCounts(kills, slots));
         }
     }
 
@@ -713,6 +721,9 @@ public class LuckTrackerPlugin extends Plugin
         }
 
         String sourceName = lastKillSource;
+        sessionLogSlots.computeIfAbsent(sourceName, k -> new ArrayList<>())
+            .add(itemName + " (" + kcAtDrop + " kc)");
+        showSessionKillCounts();
 
         Integer itemId = resolveItemId(itemName, sourceName);
         if (itemId == null)

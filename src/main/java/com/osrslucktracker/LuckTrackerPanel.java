@@ -2,12 +2,15 @@ package com.osrslucktracker;
 
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.util.LinkBrowser;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -16,6 +19,9 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Cursor;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -31,6 +37,7 @@ class LuckTrackerPanel extends PluginPanel
     // Keeps each request well under the backend's per-request cap.
     private static final int IMPORT_BATCH_SIZE = 200;
     private static final int MAX_LISTED_PAGES = 12;
+    private static final String WEBSITE_URL = "https://osrs-luck-tracker.vercel.app";
     private static final String NO_BOSS_KILLS_TEXT = "No boss kills tracked yet this session.";
 
     private final LuckTrackerPlugin plugin;
@@ -76,6 +83,32 @@ class LuckTrackerPanel extends PluginPanel
         title.setAlignmentX(Component.CENTER_ALIGNMENT);
         content.add(title);
 
+        content.add(Box.createVerticalStrut(6));
+
+        JLabel description = new JLabel(
+            "<html><div style='text-align:center'>Records your boss collection log drops and shows "
+                + "how spooned or dry you were for each one.</div></html>"
+        );
+        description.setAlignmentX(Component.CENTER_ALIGNMENT);
+        content.add(description);
+
+        content.add(Box.createVerticalStrut(4));
+
+        JLabel websiteLink = new JLabel("<html><u>View your luck on the website</u></html>");
+        websiteLink.setForeground(ColorScheme.BRAND_ORANGE);
+        websiteLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        websiteLink.setToolTipText(WEBSITE_URL);
+        websiteLink.setAlignmentX(Component.CENTER_ALIGNMENT);
+        websiteLink.addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                LinkBrowser.browse(WEBSITE_URL);
+            }
+        });
+        content.add(websiteLink);
+
         content.add(Box.createVerticalStrut(8));
 
         statusLabel = new JLabel("Tracking new drops automatically.");
@@ -89,46 +122,61 @@ class LuckTrackerPanel extends PluginPanel
         bossKcLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         content.add(bossKcLabel);
 
-        content.add(Box.createVerticalStrut(16));
+        content.add(Box.createVerticalStrut(12));
+
+        // Backlogging is a one-time step, so it stays collapsed by default.
+        JPanel backlog = new JPanel();
+        backlog.setLayout(new BoxLayout(backlog, BoxLayout.Y_AXIS));
+        backlog.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backlog.setVisible(false);
+
+        JCheckBox backlogToggle = new JCheckBox("Backlog existing collection log items");
+        backlogToggle.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backlogToggle.addItemListener(e -> backlog.setVisible(backlogToggle.isSelected()));
+        content.add(backlogToggle);
+
+        backlog.add(Box.createVerticalStrut(8));
 
         // --- Import from the in-game collection log ---
 
         JLabel importTitle = new JLabel("Import from collection log");
         importTitle.setAlignmentX(Component.CENTER_ALIGNMENT);
-        content.add(importTitle);
+        backlog.add(importTitle);
 
         JLabel importHelp = new JLabel(
-            "<html><i>Open your collection log in-game and click through the pages listed "
-                + "below. Items you already have are picked up as each page opens.</i></html>"
+            "<html><i>A one-time step to add items you got before installing the plugin. "
+                + "1. Open your collection log in-game and click through the pages listed below; "
+                + "the plugin reads each page as it opens. 2. Click Import items. "
+                + "New drops are tracked automatically, so you won't need to do this again.</i></html>"
         );
         importHelp.setAlignmentX(Component.CENTER_ALIGNMENT);
-        content.add(importHelp);
+        backlog.add(importHelp);
 
-        content.add(Box.createVerticalStrut(6));
+        backlog.add(Box.createVerticalStrut(6));
 
         importSummary = new JLabel("Loading items...");
         importSummary.setAlignmentX(Component.CENTER_ALIGNMENT);
-        content.add(importSummary);
+        backlog.add(importSummary);
 
         importPages = new JLabel();
         importPages.setAlignmentX(Component.CENTER_ALIGNMENT);
-        content.add(importPages);
+        backlog.add(importPages);
 
-        content.add(Box.createVerticalStrut(6));
+        backlog.add(Box.createVerticalStrut(6));
 
         importButton = new JButton("Import items");
         importButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         importButton.setEnabled(false);
         importButton.addActionListener(e -> onImportClicked());
-        content.add(importButton);
+        backlog.add(importButton);
 
-        content.add(Box.createVerticalStrut(16));
+        backlog.add(Box.createVerticalStrut(16));
 
         // --- Manual backfill, one item at a time ---
 
         JLabel backfillTitle = new JLabel("Add a single item");
         backfillTitle.setAlignmentX(Component.CENTER_ALIGNMENT);
-        content.add(backfillTitle);
+        backlog.add(backfillTitle);
 
         JLabel backfillNote = new JLabel(
             "<html><i>Collection log items you haven't recorded yet &mdash; useful for shared items "
@@ -136,22 +184,24 @@ class LuckTrackerPanel extends PluginPanel
                 + "this can't be undone or matched to a KC.</i></html>"
         );
         backfillNote.setAlignmentX(Component.CENTER_ALIGNMENT);
-        content.add(backfillNote);
+        backlog.add(backfillNote);
 
-        content.add(Box.createVerticalStrut(6));
+        backlog.add(Box.createVerticalStrut(6));
 
         backfillDropdown = new JComboBox<>();
         backfillDropdown.setAlignmentX(Component.CENTER_ALIGNMENT);
         backfillDropdown.addItem(new CatalogChoice(-1, "Loading items...", ""));
-        content.add(backfillDropdown);
+        backlog.add(backfillDropdown);
 
-        content.add(Box.createVerticalStrut(6));
+        backlog.add(Box.createVerticalStrut(6));
 
         backfillButton = new JButton("Mark as already obtained");
         backfillButton.setAlignmentX(Component.CENTER_ALIGNMENT);
         backfillButton.setEnabled(false);
         backfillButton.addActionListener(e -> onBackfillClicked());
-        content.add(backfillButton);
+        backlog.add(backfillButton);
+
+        content.add(backlog);
 
         add(content, BorderLayout.NORTH);
 
@@ -211,8 +261,12 @@ class LuckTrackerPanel extends PluginPanel
         }
     }
 
-    /** Runs on the EDT; the plugin calls it after each kill-count message and on logout. */
-    void showBossKillCounts(Map<String, Integer> counts)
+    /**
+     * Runs on the EDT; the plugin calls it after each kill-count message,
+     * each new collection log slot and on logout. Slots are listed under
+     * the boss they were credited to.
+     */
+    void showBossKillCounts(Map<String, Integer> counts, Map<String, List<String>> logSlots)
     {
         if (counts.isEmpty())
         {
@@ -223,6 +277,10 @@ class LuckTrackerPanel extends PluginPanel
         for (Map.Entry<String, Integer> entry : counts.entrySet())
         {
             text.append("<br>&bull; ").append(entry.getKey()).append(": ").append(entry.getValue());
+            for (String slot : logSlots.getOrDefault(entry.getKey(), Collections.emptyList()))
+            {
+                text.append("<br>&nbsp;&nbsp;&nbsp;&ndash; ").append(slot);
+            }
         }
         bossKcLabel.setText(text.append("</html>").toString());
     }

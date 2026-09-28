@@ -5,12 +5,14 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 
 @ConfigGroup("lucktracker")
+// Backend settings are hidden: players never need to change them.
 public interface LuckTrackerConfig extends Config
 {
     @ConfigItem(
         keyName = "apiBaseUrl",
         name = "API base URL",
-        description = "Luck Tracker backend URL. Leave as-is unless you run your own backend."
+        description = "Luck Tracker backend URL. Leave as-is unless you run your own backend.",
+        hidden = true
     )
     default String apiBaseUrl()
     {
@@ -20,7 +22,8 @@ public interface LuckTrackerConfig extends Config
     @ConfigItem(
         keyName = "publishableKey",
         name = "Publishable API key",
-        description = "Supabase publishable key for the backend (sb_publishable_...). Never enter a secret key here."
+        description = "Supabase publishable key for the backend (sb_publishable_...). Never enter a secret key here.",
+        hidden = true
     )
     default String publishableKey()
     {
