@@ -308,12 +308,17 @@ class LuckTrackerPanel extends PluginPanel
         }
 
         recordedFetchInFlight = accountHash;
-        apiClient.fetchRecordedDrops(ign, keys ->
+        apiClient.fetchPlayerLuck(ign, results ->
             SwingUtilities.invokeLater(() ->
             {
                 recordedFetchInFlight = null;
-                if (keys != null)
+                if (results != null)
                 {
+                    Set<String> keys = new HashSet<>();
+                    for (PlayerLuckResponse.Result result : results)
+                    {
+                        keys.add(new BackfillPlanner.Candidate(result.itemId, result.sourceName).key());
+                    }
                     recordedByAccount.put(accountHash, keys);
                     refresh();
                 }
@@ -562,6 +567,7 @@ class LuckTrackerPanel extends PluginPanel
                 {
                     sent.add(c.key());
                 }
+                plugin.invalidateLuckResults();
                 sendImportBatch(token, accountHash, all, offset + chunk.size(),
                     inserted + result.inserted, alreadyRecorded + result.alreadyRecorded);
             })
@@ -598,6 +604,7 @@ class LuckTrackerPanel extends PluginPanel
                 {
                     sentByAccount.computeIfAbsent(accountHash, k -> new HashSet<>())
                         .add(new BackfillPlanner.Candidate(selected.itemId, selected.sourceName).key());
+                    plugin.invalidateLuckResults();
                     refresh();
                 }
             })

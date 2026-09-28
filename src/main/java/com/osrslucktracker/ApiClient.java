@@ -14,9 +14,8 @@ import okhttp3.Response;
 import javax.inject.Inject;
 import javax.inject.Singleton;
 import java.io.IOException;
-import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -96,7 +95,8 @@ class ApiClient
         });
     }
 
-    void ingestDrop(String installToken, String accountHash, int itemId, String sourceName, int kcReceived, int currentKc)
+    void ingestDrop(String installToken, String accountHash, int itemId, String sourceName, int kcReceived, int currentKc,
+        Runnable onLogged)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -127,6 +127,7 @@ class ApiClient
                     if (r.isSuccessful())
                     {
                         log.info("Logged item {} from {} at {} kc", itemId, sourceName, kcReceived);
+                        onLogged.run();
                     }
                     else
                     {
@@ -224,12 +225,11 @@ class ApiClient
     }
 
     /**
-     * Every (item_id, source_name) this player already has a row for, as
-     * {@link BackfillPlanner.Candidate#key()}s, read from the public
-     * /get-player-luck endpoint. A player with no rows yet (404) gets an
-     * empty set; any other failure calls back with null.
+     * Every drop this player has recorded, with its luck, read from the
+     * public /get-player-luck endpoint. A player with no rows yet (404)
+     * gets an empty list; any other failure calls back with null.
      */
-    void fetchRecordedDrops(String ign, Consumer<Set<String>> onResult)
+    void fetchPlayerLuck(String ign, Consumer<List<PlayerLuckResponse.Result>> onResult)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -255,7 +255,7 @@ class ApiClient
             @Override
             public void onFailure(Call call, IOException e)
             {
-                log.warn("Recorded-drops fetch failed", e);
+                log.warn("Player luck fetch failed", e);
                 onResult.accept(null);
             }
 
@@ -266,29 +266,21 @@ class ApiClient
                 {
                     if (r.code() == 404)
                     {
-                        onResult.accept(new HashSet<>());
+                        onResult.accept(new ArrayList<>());
                         return;
                     }
                     if (!r.isSuccessful() || r.body() == null)
                     {
-                        log.warn("Recorded-drops fetch returned HTTP {}", r.code());
+                        log.warn("Player luck fetch returned HTTP {}", r.code());
                         onResult.accept(null);
                         return;
                     }
                     PlayerLuckResponse parsed = gson.fromJson(r.body().string(), PlayerLuckResponse.class);
-                    Set<String> keys = new HashSet<>();
-                    if (parsed != null && parsed.results != null)
-                    {
-                        for (PlayerLuckResponse.Result result : parsed.results)
-                        {
-                            keys.add(new BackfillPlanner.Candidate(result.itemId, result.sourceName).key());
-                        }
-                    }
-                    onResult.accept(keys);
+                    onResult.accept(parsed == null || parsed.results == null ? new ArrayList<>() : parsed.results);
                 }
                 catch (Exception e)
                 {
-                    log.warn("Failed to parse recorded-drops response", e);
+                    log.warn("Failed to parse player luck response", e);
                     onResult.accept(null);
                 }
             }

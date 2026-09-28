@@ -5,6 +5,7 @@ import com.google.gson.JsonSyntaxException;
 import com.google.gson.reflect.TypeToken;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.ScriptID;
@@ -18,7 +19,10 @@ import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
+import net.runelite.client.chat.ChatMessageManager;
+import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.game.ChatIconManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
@@ -112,6 +116,17 @@ public class LuckTrackerPlugin extends Plugin
     private ClientToolbar clientToolbar;
 
     @Inject
+    private ChatMessageManager chatMessageManager;
+
+    @Inject
+    private ChatIconManager chatIconManager;
+
+    // Plugin icon shown at the start of the collection log check line.
+    // Registered once; RuneLite has no way to unregister a chat icon.
+    private static final int CHAT_ICON_SIZE = 13;
+    private int chatIconId = -1;
+
+    @Inject
     private LuckTrackerConfig config;
 
     @Inject
@@ -132,6 +147,13 @@ public class LuckTrackerPlugin extends Plugin
     private final Map<String, Integer> sessionKillCounts = new HashMap<>();
     // New collection log slots since login, by the source they were credited to.
     private final Map<String, List<String>> sessionLogSlots = new HashMap<>();
+
+    // This account's recorded drops from /get-player-luck, for the line
+    // added when an item is checked in the collection log. Fetched on the
+    // first check and again after any new drop is recorded. Client thread only.
+    private String luckResultsAccount = null;
+    private List<PlayerLuckResponse.Result> luckResults = null;
+    private boolean luckFetchInFlight = false;
     private String lastKillSource = null;
     private long lastKillTimestampMs = 0;
     private long lastKillWindowMs = KILL_CONTEXT_WINDOW_MS;
@@ -188,6 +210,11 @@ public class LuckTrackerPlugin extends Plugin
             .build();
         clientToolbar.addNavigation(navButton);
 
+        if (chatIconId == -1)
+        {
+            chatIconId = chatIconManager.registerChatIcon(ImageUtil.resizeImage(icon, CHAT_ICON_SIZE, CHAT_ICON_SIZE));
+        }
+
         ensureRegistered();
     }
 
@@ -198,6 +225,8 @@ public class LuckTrackerPlugin extends Plugin
         bossKillCounts.clear();
         sessionKillCounts.clear();
         sessionLogSlots.clear();
+        luckResults = null;
+        luckResultsAccount = null;
         lastKillSource = null;
         obtainedByPage.clear();
         scannedAccountHash = null;
@@ -314,6 +343,14 @@ public class LuckTrackerPlugin extends Plugin
         }
     }
 
+    /** The open collection log page's title, or null if the log isn't open. */
+    private String openLogPageTitle()
+    {
+        Widget header = client.getWidget(InterfaceID.Collection.HEADER_TEXT);
+        Widget titleWidget = header == null ? null : header.getChild(COLLECTION_LOG_HEADER_TITLE_INDEX);
+        return titleWidget == null ? null : Text.removeTags(titleWidget.getText()).trim();
+    }
+
     private void readCollectionLogPage()
     {
         if (client.getLocalPlayer() == null)
@@ -341,17 +378,15 @@ public class LuckTrackerPlugin extends Plugin
             return;
         }
 
-        Widget header = client.getWidget(InterfaceID.Collection.HEADER_TEXT);
-        Widget titleWidget = header == null ? null : header.getChild(COLLECTION_LOG_HEADER_TITLE_INDEX);
+        String title = openLogPageTitle();
         Widget items = client.getWidget(InterfaceID.Collection.ITEMS_CONTENTS);
-        if (titleWidget == null || items == null || items.getChildren() == null)
+        if (title == null || items == null || items.getChildren() == null)
         {
             return;
         }
 
         // Search results and anything else that isn't a real page won't
         // match a page name from the cache, so they're ignored here.
-        String title = Text.removeTags(titleWidget.getText()).trim();
         if (!index.hasPage(title))
         {
             return;
@@ -687,7 +722,123 @@ public class LuckTrackerPlugin extends Plugin
         {
             log.info("Collection log drop '{}' seen ({} message)", itemName, event.getType());
             handleCollectionLogDrop(itemName);
+            return;
         }
+
+        String checkedName = LuckCheckMessage.parseCheckedItemName(message);
+        if (checkedName != null)
+        {
+            handleCollectionLogCheck(checkedName);
+        }
+    }
+
+    /**
+     * Adds a line under the game's "You have received 4x Soiled page."
+     * when the player checks an item in their own collection log, with the
+     * KC and luck the backend recorded for it. Items with no recorded drop
+     * get nothing.
+     */
+    private void handleCollectionLogCheck(String itemName)
+    {
+        String title = openLogPageTitle();
+        CollectionLogIndex index = getCollectionLogIndex();
+        String accountHash = getCurrentAccountHash();
+        if (title == null || index == null || accountHash == null || localPlayerName == null || !index.hasPage(title))
+        {
+            return;
+        }
+        if (adventureLogOwner != null && !Text.standardize(adventureLogOwner).equals(Text.standardize(localPlayerName)))
+        {
+            return;
+        }
+
+        Set<Integer> itemIds = new HashSet<>();
+        for (int id : index.itemsOn(title))
+        {
+            if (client.getItemDefinition(id).getName().equalsIgnoreCase(itemName))
+            {
+                itemIds.add(id);
+            }
+        }
+        if (itemIds.isEmpty())
+        {
+            return;
+        }
+
+        if (accountHash.equals(luckResultsAccount) && luckResults != null)
+        {
+            printLuckCheck(itemName, itemIds, title);
+            return;
+        }
+        if (luckFetchInFlight)
+        {
+            return;
+        }
+
+        luckFetchInFlight = true;
+        apiClient.fetchPlayerLuck(localPlayerName, results -> clientThread.invoke(() ->
+        {
+            luckFetchInFlight = false;
+            if (results == null || !accountHash.equals(getCurrentAccountHash()))
+            {
+                return;
+            }
+            luckResultsAccount = accountHash;
+            luckResults = results;
+            printLuckCheck(itemName, itemIds, title);
+        }));
+    }
+
+    /**
+     * Prints the recorded drops of the checked item. When an item is
+     * recorded from several sources, the ones matching the open page win;
+     * the source is named whenever more than one line is printed or the
+     * drop came from another page's source.
+     */
+    private void printLuckCheck(String itemName, Set<Integer> itemIds, String pageTitle)
+    {
+        List<PlayerLuckResponse.Result> matches = new ArrayList<>();
+        for (PlayerLuckResponse.Result result : luckResults)
+        {
+            if (itemIds.contains(result.itemId))
+            {
+                matches.add(result);
+            }
+        }
+
+        String page = BackfillPlanner.normalize(pageTitle);
+        List<PlayerLuckResponse.Result> onPage = new ArrayList<>();
+        for (PlayerLuckResponse.Result result : matches)
+        {
+            if (BackfillPlanner.normalize(result.sourceName).startsWith(page))
+            {
+                onPage.add(result);
+            }
+        }
+        List<PlayerLuckResponse.Result> shown = onPage.isEmpty() ? matches : onPage;
+        boolean includeSource = onPage.isEmpty() || shown.size() > 1;
+
+        int iconIndex = chatIconId == -1 ? -1 : chatIconManager.chatIconIndex(chatIconId);
+        for (PlayerLuckResponse.Result result : shown)
+        {
+            String line = LuckCheckMessage.format(result, itemName, includeSource, iconIndex);
+            if (line != null)
+            {
+                chatMessageManager.queue(QueuedMessage.builder()
+                    .type(ChatMessageType.GAMEMESSAGE)
+                    .runeLiteFormattedMessage(line)
+                    .build());
+            }
+        }
+    }
+
+    /** Called after any drop is recorded, so the next check fetches fresh results. */
+    void invalidateLuckResults()
+    {
+        clientThread.invoke(() ->
+        {
+            luckResults = null;
+        });
     }
 
     private void handleCollectionLogDrop(String itemName)
@@ -798,7 +949,8 @@ public class LuckTrackerPlugin extends Plugin
         }
 
         Integer currentKc = bossKillCounts.get(sourceName);
-        apiClient.ingestDrop(token, hash, itemId, sourceName, kcReceived, currentKc != null ? currentKc : kcReceived);
+        apiClient.ingestDrop(token, hash, itemId, sourceName, kcReceived, currentKc != null ? currentKc : kcReceived,
+            this::invalidateLuckResults);
     }
 
     /**
