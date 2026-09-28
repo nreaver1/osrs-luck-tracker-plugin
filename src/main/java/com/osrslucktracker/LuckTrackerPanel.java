@@ -31,6 +31,7 @@ class LuckTrackerPanel extends PluginPanel
     // Keeps each request well under the backend's per-request cap.
     private static final int IMPORT_BATCH_SIZE = 200;
     private static final int MAX_LISTED_PAGES = 12;
+    private static final String NO_BOSS_KILLS_TEXT = "No boss kills tracked yet this session.";
 
     private final LuckTrackerPlugin plugin;
     private final ApiClient apiClient;
@@ -84,7 +85,7 @@ class LuckTrackerPanel extends PluginPanel
 
         content.add(Box.createVerticalStrut(8));
 
-        bossKcLabel = new JLabel("No boss kills tracked yet this session.");
+        bossKcLabel = new JLabel(NO_BOSS_KILLS_TEXT);
         bossKcLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         content.add(bossKcLabel);
 
@@ -210,9 +211,14 @@ class LuckTrackerPanel extends PluginPanel
         }
     }
 
-    /** Runs on the EDT; the plugin calls it after each kill-count message. */
+    /** Runs on the EDT; the plugin calls it after each kill-count message and on logout. */
     void showBossKillCounts(Map<String, Integer> counts)
     {
+        if (counts.isEmpty())
+        {
+            bossKcLabel.setText(NO_BOSS_KILLS_TEXT);
+            return;
+        }
         StringBuilder text = new StringBuilder("<html>Boss KCs this session:");
         for (Map.Entry<String, Integer> entry : counts.entrySet())
         {

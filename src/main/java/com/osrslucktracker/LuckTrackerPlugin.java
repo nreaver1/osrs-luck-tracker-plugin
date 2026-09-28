@@ -124,7 +124,10 @@ public class LuckTrackerPlugin extends Plugin
     private static final String READ_LOG_PAGES_KEY = "readLogPages";
     private static final Type READ_LOG_PAGES_TYPE = new TypeToken<Map<String, Set<Integer>>>() {}.getType();
 
+    // Lifetime KC as the game prints it, which the API needs for kc_received.
     private final Map<String, Integer> bossKillCounts = new HashMap<>();
+    // Kills seen since login, for the panel; one kill-count message is one kill.
+    private final Map<String, Integer> sessionKillCounts = new HashMap<>();
     private String lastKillSource = null;
     private long lastKillTimestampMs = 0;
     private long lastKillWindowMs = KILL_CONTEXT_WINDOW_MS;
@@ -189,6 +192,7 @@ public class LuckTrackerPlugin extends Plugin
     {
         clientToolbar.removeNavigation(navButton);
         bossKillCounts.clear();
+        sessionKillCounts.clear();
         lastKillSource = null;
         obtainedByPage.clear();
         scannedAccountHash = null;
@@ -215,6 +219,7 @@ public class LuckTrackerPlugin extends Plugin
                 registeredAccountHash = null;
                 lastRegisterAttemptMs = 0;
                 clearCollectionLogScan();
+                resetSessionKillCounts();
                 break;
             default:
                 break;
@@ -626,6 +631,27 @@ public class LuckTrackerPlugin extends Plugin
         });
     }
 
+    private void resetSessionKillCounts()
+    {
+        if (sessionKillCounts.isEmpty())
+        {
+            return;
+        }
+        sessionKillCounts.clear();
+        showSessionKillCounts();
+    }
+
+    private void showSessionKillCounts()
+    {
+        LuckTrackerPanel p = panel;
+        if (p != null)
+        {
+            // Snapshot here: the map is only touched on the client thread, the panel reads it on the EDT.
+            Map<String, Integer> snapshot = new TreeMap<>(sessionKillCounts);
+            SwingUtilities.invokeLater(() -> p.showBossKillCounts(snapshot));
+        }
+    }
+
     @Subscribe
     public void onChatMessage(ChatMessage event)
     {
@@ -640,13 +666,8 @@ public class LuckTrackerPlugin extends Plugin
         if (killCount != null)
         {
             bossKillCounts.put(killCount.source, killCount.kc);
-            LuckTrackerPanel p = panel;
-            if (p != null)
-            {
-                // Snapshot here: the map is only touched on the client thread, the panel reads it on the EDT.
-                Map<String, Integer> snapshot = new TreeMap<>(bossKillCounts);
-                SwingUtilities.invokeLater(() -> p.showBossKillCounts(snapshot));
-            }
+            sessionKillCounts.merge(killCount.source, 1, Integer::sum);
+            showSessionKillCounts();
             lastKillSource = killCount.source;
             lastKillTimestampMs = System.currentTimeMillis();
             lastKillWindowMs = killCount.isRaid() ? RAID_CONTEXT_WINDOW_MS : KILL_CONTEXT_WINDOW_MS;
