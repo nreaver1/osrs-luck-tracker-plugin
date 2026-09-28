@@ -38,6 +38,7 @@ class LuckTrackerPanel extends PluginPanel
     private static final int IMPORT_BATCH_SIZE = 200;
     private static final int MAX_LISTED_PAGES = 12;
     private static final String WEBSITE_URL = "https://osrs-luck-tracker.vercel.app";
+    static final String SUPPORT_URL = "https://github.com/nreaver1/osrs-luck-tracker-plugin/issues";
     private static final String NO_BOSS_KILLS_TEXT = "No boss kills tracked yet this session.";
 
     private final LuckTrackerPlugin plugin;
@@ -46,6 +47,7 @@ class LuckTrackerPanel extends PluginPanel
     private final ClientThread clientThread;
 
     private final JLabel statusLabel;
+    private final JLabel tokenRejectedLabel;
     private final JLabel bossKcLabel;
     private final JLabel importSummary;
     private final JLabel importPages;
@@ -115,6 +117,27 @@ class LuckTrackerPanel extends PluginPanel
         statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
         statusLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         content.add(statusLabel);
+
+        // Shown when /register refused this install; see LuckTrackerPlugin.isTokenRejected().
+        tokenRejectedLabel = new JLabel(
+            "<html><div style='text-align:center'><b>Drops aren't being recorded.</b> This account was set up "
+                + "from another RuneLite install (another PC, or before a reinstall). Log in to the same RuneLite "
+                + "account here so your settings sync, then restart RuneLite. Still stuck? <u>Get support</u>.</div></html>"
+        );
+        tokenRejectedLabel.setForeground(ColorScheme.PROGRESS_ERROR_COLOR);
+        tokenRejectedLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        tokenRejectedLabel.setToolTipText(SUPPORT_URL);
+        tokenRejectedLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        tokenRejectedLabel.setVisible(false);
+        tokenRejectedLabel.addMouseListener(new MouseAdapter()
+        {
+            @Override
+            public void mouseClicked(MouseEvent e)
+            {
+                LinkBrowser.browse(SUPPORT_URL);
+            }
+        });
+        content.add(tokenRejectedLabel);
 
         content.add(Box.createVerticalStrut(8));
 
@@ -291,6 +314,7 @@ class LuckTrackerPanel extends PluginPanel
      */
     void refresh()
     {
+        tokenRejectedLabel.setVisible(plugin.isTokenRejected());
         fetchRecordedDropsIfNeeded();
         refreshCollectionLogImport();
         rebuildDropdown();

@@ -39,9 +39,10 @@ class ApiClient
     /**
      * Mints a token for a new account, or, when {@code installToken} is
      * the account's current token, updates its IGN and returns the same
-     * token. Without a valid token an existing account gets a 409.
+     * token. Without a valid token an existing account gets a 409, reported
+     * through {@code onRejected}.
      */
-    void register(String accountHash, String ign, String installToken, Consumer<String> onToken)
+    void register(String accountHash, String ign, String installToken, Consumer<String> onToken, Runnable onRejected)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -74,6 +75,7 @@ class ApiClient
                         // The server only hands out a token when it creates the
                         // account, so a lost local token can't be recovered here.
                         log.warn("This account is already registered and the stored install token (if any) was not accepted; drops will not be submitted");
+                        onRejected.run();
                         return;
                     }
                     if (!r.isSuccessful() || r.body() == null)

@@ -185,6 +185,10 @@ public class LuckTrackerPlugin extends Plugin
     // Account known to have an install_token, so the per-tick
     // registration check can stop once it's done.
     private volatile String registeredAccountHash;
+    // Account whose /register was refused (409): it was set up from another
+    // install and this one has no valid token. Kept for the session so the
+    // panel can say drops aren't being recorded, and so register isn't retried.
+    private volatile String tokenRejectedAccountHash;
     private long lastRegisterAttemptMs;
 
     private LuckTrackerPanel panel;
@@ -637,6 +641,10 @@ public class LuckTrackerPlugin extends Plugin
                 return;
             }
             String hash = Long.toHexString(accountHash);
+            if (hash.equals(tokenRejectedAccountHash))
+            {
+                return;
+            }
 
             String existingToken = configManager.getConfiguration("lucktracker", hash, "installToken");
             boolean hasToken = existingToken != null && !existingToken.isEmpty();
@@ -667,6 +675,10 @@ public class LuckTrackerPlugin extends Plugin
                 configManager.setConfiguration("lucktracker", hash, REGISTERED_IGN_KEY, ign);
                 registeredAccountHash = hash;
                 log.info("Registered {} with the Luck Tracker backend", ign);
+            }, () ->
+            {
+                tokenRejectedAccountHash = hash;
+                notifyPanel();
             });
         });
     }
@@ -1012,6 +1024,13 @@ public class LuckTrackerPlugin extends Plugin
     String getLocalPlayerName()
     {
         return localPlayerName;
+    }
+
+    /** True when this account was set up from another install, so drops can't be submitted from this one. */
+    boolean isTokenRejected()
+    {
+        String hash = getCurrentAccountHash();
+        return hash != null && hash.equals(tokenRejectedAccountHash);
     }
 
     boolean isCollectionLogIndexFailed()
