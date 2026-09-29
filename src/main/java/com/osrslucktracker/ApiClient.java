@@ -227,11 +227,14 @@ class ApiClient
     }
 
     /**
-     * Every drop this player has recorded, with its luck, read from the
-     * public /get-player-luck endpoint. A player with no rows yet (404)
-     * gets an empty list; any other failure calls back with null.
+     * Every drop this player has recorded, with its luck. With an install
+     * token this is the token-checked POST form of /get-player-luck, which
+     * works even when the player has hidden their profile; without one it
+     * falls back to the public lookup by name. A player with no rows yet
+     * (404) gets an empty list; any other failure calls back with null.
      */
-    void fetchPlayerLuck(String ign, Consumer<List<PlayerLuckResponse.Result>> onResult)
+    void fetchPlayerLuck(String accountHash, String installToken, String ign,
+        Consumer<List<PlayerLuckResponse.Result>> onResult)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -246,11 +249,16 @@ class ApiClient
             return;
         }
 
-        Request request = new Request.Builder()
-            .url(url.newBuilder().addQueryParameter("ign", ign).build())
-            .header("apikey", config.publishableKey())
-            .get()
-            .build();
+        Request.Builder builder = new Request.Builder().header("apikey", config.publishableKey());
+        if (installToken != null && !installToken.isEmpty())
+        {
+            builder.url(url).post(RequestBody.create(JSON, gson.toJson(new OwnLuckRequest(installToken, accountHash))));
+        }
+        else
+        {
+            builder.url(url.newBuilder().addQueryParameter("ign", ign).build()).get();
+        }
+        Request request = builder.build();
 
         httpClient.newCall(request).enqueue(new Callback()
         {
@@ -284,6 +292,51 @@ class ApiClient
                 {
                     log.warn("Failed to parse player luck response", e);
                     onResult.accept(null);
+                }
+            }
+        });
+    }
+
+    /**
+     * Sends the "show my log" / "show me on the leaderboard" config to the
+     * backend. Calls back true once the server has stored them.
+     */
+    void updateSettings(String installToken, String accountHash, boolean profilePublic, boolean leaderboardOptIn,
+        Consumer<Boolean> onResult)
+    {
+        if (config.apiBaseUrl().isEmpty())
+        {
+            log.debug("API base URL not configured, skipping update-settings");
+            onResult.accept(false);
+            return;
+        }
+
+        UpdateSettingsRequest body = new UpdateSettingsRequest(installToken, accountHash, profilePublic, leaderboardOptIn);
+        Request request = new Request.Builder()
+            .url(config.apiBaseUrl() + "/update-settings")
+            .header("apikey", config.publishableKey())
+            .post(RequestBody.create(JSON, gson.toJson(body)))
+            .build();
+
+        httpClient.newCall(request).enqueue(new Callback()
+        {
+            @Override
+            public void onFailure(Call call, IOException e)
+            {
+                log.warn("Update-settings call failed", e);
+                onResult.accept(false);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response)
+            {
+                try (Response r = response)
+                {
+                    if (!r.isSuccessful())
+                    {
+                        log.warn("Update-settings returned HTTP {}", r.code());
+                    }
+                    onResult.accept(r.isSuccessful());
                 }
             }
         });

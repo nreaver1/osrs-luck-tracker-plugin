@@ -115,10 +115,22 @@ dropdown, hasn't been exercised yet.)
 
 ## Configuration
 
-In RuneLite's plugin settings, fill in:
-- **API base URL**: `https://YOUR_REF.supabase.co/functions/v1`
-- **Publishable API key**: `sb_publishable_...` (the same one from the
-  frontend's `.env.local` — never the secret key)
+The plugin settings have two checkboxes:
+- **Show my log on the website** (on by default). When off, looking up
+  your name on the website says no player is logged under it, and you're
+  left off the leaderboard. Drops are still recorded, and the plugin's
+  own panel and collection log check keep working: they read your drops
+  with your install token (`POST /get-player-luck`), not by name.
+- **Show me on the leaderboard** (off by default). Lists you on the
+  website's luckiest/driest players board. Needs the first setting on.
+
+Both are sent to `/update-settings` when they change, and once for each
+account that hasn't synced them yet (per-account config key
+`syncedSettings`). They're stored per RuneLite profile, so every account
+played on that profile shares them.
+
+The backend URL and publishable key are hidden config items
+(`apiBaseUrl`, `publishableKey`) that default to the live backend.
 
 ## Known limitations (by design, not bugs)
 

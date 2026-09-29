@@ -24,6 +24,7 @@ import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ChatIconManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -92,6 +93,10 @@ public class LuckTrackerPlugin extends Plugin
     // Per-account config key: the IGN the backend last accepted for this
     // account, so a name change can be sent to /register.
     private static final String REGISTERED_IGN_KEY = "registeredIgn";
+    // Per-account config key: the visibility settings the backend last
+    // stored for this account ("<showProfile>,<showOnLeaderboard>").
+    private static final String SYNCED_SETTINGS_KEY = "syncedSettings";
+    private static final long SETTINGS_RETRY_MS = 60_000;
 
     // Title of the adventure log opened in a POH ("The Exploits of X").
     private static final Pattern ADVENTURE_LOG_TITLE_PATTERN = Pattern.compile("The Exploits of (.+)");
@@ -190,6 +195,11 @@ public class LuckTrackerPlugin extends Plugin
     // panel can say drops aren't being recorded, and so register isn't retried.
     private volatile String tokenRejectedAccountHash;
     private long lastRegisterAttemptMs;
+    // "<account>:<settings>" the backend is known to hold, so the per-tick
+    // settings check is a string compare once they're in sync. Client thread only.
+    private String settingsSynced;
+    private boolean settingsInFlight;
+    private long lastSettingsAttemptMs;
 
     private LuckTrackerPanel panel;
     private NavigationButton navButton;
@@ -237,6 +247,8 @@ public class LuckTrackerPlugin extends Plugin
         adventureLogOwner = null;
         registeredAccountHash = null;
         lastRegisterAttemptMs = 0;
+        settingsSynced = null;
+        lastSettingsAttemptMs = 0;
     }
 
     @Subscribe
@@ -280,6 +292,7 @@ public class LuckTrackerPlugin extends Plugin
             ensureRegistered();
         }
         announceAccount();
+        syncSettings();
 
         // The adventure log's title widget is only populated a tick after
         // it loads — same timing RuneLite's Chat Commands plugin handles.
@@ -292,6 +305,74 @@ public class LuckTrackerPlugin extends Plugin
                 adventureLogOwner = owner;
             }
         }
+    }
+
+    @Subscribe
+    public void onConfigChanged(ConfigChanged event)
+    {
+        if ("lucktracker".equals(event.getGroup())
+            && (LuckTrackerConfig.SHOW_PROFILE_KEY.equals(event.getKey())
+                || LuckTrackerConfig.SHOW_ON_LEADERBOARD_KEY.equals(event.getKey())))
+        {
+            clientThread.invokeLater(() ->
+            {
+                // A deliberate change goes out now, not after the retry wait.
+                lastSettingsAttemptMs = 0;
+                syncSettings();
+            });
+        }
+    }
+
+    /**
+     * Sends the "show my log" / "show me on the leaderboard" settings to
+     * the backend when it doesn't have them yet for this account: after a
+     * change, and once for each account that registered before they
+     * existed. They're stored per RuneLite profile, so every account
+     * played on it shares them. Runs on the client thread each tick;
+     * a failed send is retried after SETTINGS_RETRY_MS.
+     */
+    private void syncSettings()
+    {
+        String hash = registeredAccountHash;
+        if (hash == null || settingsInFlight || !hash.equals(getCurrentAccountHash()))
+        {
+            return;
+        }
+
+        boolean profilePublic = config.showProfile();
+        boolean leaderboard = config.showOnLeaderboard();
+        String settings = profilePublic + "," + leaderboard;
+        String synced = hash + ":" + settings;
+        if (synced.equals(settingsSynced))
+        {
+            return;
+        }
+        if (settings.equals(configManager.getConfiguration("lucktracker", hash, SYNCED_SETTINGS_KEY)))
+        {
+            settingsSynced = synced;
+            return;
+        }
+
+        String token = configManager.getConfiguration("lucktracker", hash, "installToken");
+        long now = System.currentTimeMillis();
+        if (token == null || token.isEmpty() || now - lastSettingsAttemptMs < SETTINGS_RETRY_MS)
+        {
+            return;
+        }
+        lastSettingsAttemptMs = now;
+        settingsInFlight = true;
+
+        apiClient.updateSettings(token, hash, profilePublic, leaderboard, ok -> clientThread.invoke(() ->
+        {
+            settingsInFlight = false;
+            if (ok)
+            {
+                configManager.setConfiguration("lucktracker", hash, SYNCED_SETTINGS_KEY, settings);
+                settingsSynced = synced;
+                log.info("Luck Tracker visibility saved: profile {}, leaderboard {}",
+                    profilePublic ? "shown" : "hidden", leaderboard ? "on" : "off");
+            }
+        }));
     }
 
     @Subscribe
@@ -788,7 +869,7 @@ public class LuckTrackerPlugin extends Plugin
         }
 
         luckFetchInFlight = true;
-        apiClient.fetchPlayerLuck(localPlayerName, results -> clientThread.invoke(() ->
+        apiClient.fetchPlayerLuck(accountHash, getInstallToken(), localPlayerName, results -> clientThread.invoke(() ->
         {
             luckFetchInFlight = false;
             if (results == null || !accountHash.equals(getCurrentAccountHash()))

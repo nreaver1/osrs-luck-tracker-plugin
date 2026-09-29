@@ -332,7 +332,7 @@ class LuckTrackerPanel extends PluginPanel
         }
 
         recordedFetchInFlight = accountHash;
-        apiClient.fetchPlayerLuck(ign, results ->
+        apiClient.fetchPlayerLuck(accountHash, plugin.getInstallToken(), ign, results ->
             SwingUtilities.invokeLater(() ->
             {
                 recordedFetchInFlight = null;
