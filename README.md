@@ -17,7 +17,9 @@ in this build.
    a kill-count message (10 minutes after a raid completion, since raid
    loot is claimed from the chest later), resolves the item name to an
    item ID and calls `/ingest-drop` with the item, source, and KC at the
-   time. Names are matched against the collection log's own items first,
+   time. Once it's recorded, the plugin adds the same luck line to chat
+   that checking the slot in the collection log would ("first obtained
+   at 49 KC - dry"). Names are matched against the collection log's own items first,
    because `itemManager.search()` only knows tradeable items.
 4. Imports items the player already had before installing the plugin.
    The player opens their collection log in-game and clicks through the

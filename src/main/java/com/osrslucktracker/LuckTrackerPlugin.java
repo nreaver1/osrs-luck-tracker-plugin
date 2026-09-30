@@ -1034,20 +1034,26 @@ public class LuckTrackerPlugin extends Plugin
         List<PlayerLuckResponse.Result> shown = onPage.isEmpty() ? matches : onPage;
         boolean includeSource = onPage.isEmpty() || shown.size() > 1;
 
+        for (PlayerLuckResponse.Result result : shown)
+        {
+            queueLuckLine(result, itemName, includeSource);
+        }
+    }
+
+    /** Adds one drop's luck line to chat, colored for the current chatbox. Client thread. */
+    private void queueLuckLine(PlayerLuckResponse.Result result, String itemName, boolean includeSource)
+    {
         int iconIndex = chatIconId == -1 ? -1 : chatIconManager.chatIconIndex(chatIconId);
         // Same test RuneLite's ChatMessageManager uses: the box is only see-through in resizable mode.
         LuckCheckMessage.Palette palette = LuckCheckMessage.Palette.forChatbox(
             client.isResized() && client.getVarbitValue(VarbitID.CHATBOX_TRANSPARENCY) == 1);
-        for (PlayerLuckResponse.Result result : shown)
+        String line = LuckCheckMessage.format(result, itemName, includeSource, iconIndex, palette);
+        if (line != null)
         {
-            String line = LuckCheckMessage.format(result, itemName, includeSource, iconIndex, palette);
-            if (line != null)
-            {
-                chatMessageManager.queue(QueuedMessage.builder()
-                    .type(ChatMessageType.GAMEMESSAGE)
-                    .runeLiteFormattedMessage(line)
-                    .build());
-            }
+            chatMessageManager.queue(QueuedMessage.builder()
+                .type(ChatMessageType.GAMEMESSAGE)
+                .runeLiteFormattedMessage(line)
+                .build());
         }
     }
 
@@ -1168,8 +1174,39 @@ public class LuckTrackerPlugin extends Plugin
         }
 
         Integer currentKc = bossKillCounts.get(sourceName);
+        String itemName = client.getItemDefinition(itemId).getName();
         apiClient.ingestDrop(token, hash, itemId, sourceName, kcReceived, currentKc != null ? currentKc : kcReceived,
-            this::invalidateLuckResults);
+            () -> announceDropLuck(hash, token, itemId, itemName, kcReceived));
+    }
+
+    /**
+     * Once a new drop is recorded, prints its luck line, the same one the
+     * player would get by checking the slot in their collection log. The
+     * backend rates the drop, so this reloads the account's results (which
+     * the check needed after any new drop anyway). Runs off the client thread.
+     */
+    private void announceDropLuck(String accountHash, String token, int itemId, String itemName, int kcReceived)
+    {
+        invalidateLuckResults();
+        apiClient.fetchPlayerLuck(accountHash, token, localPlayerName, response -> clientThread.invoke(() ->
+        {
+            if (response == null || !accountHash.equals(getCurrentAccountHash()))
+            {
+                return;
+            }
+            luckResultsAccount = accountHash;
+            luckResults = response.results;
+            for (PlayerLuckResponse.Result result : response.results)
+            {
+                // The tracked row for this drop, not a backlogged one for the same item.
+                if (result.itemId == itemId && !result.backfilled && result.kcReceived != null
+                    && result.kcReceived == kcReceived)
+                {
+                    queueLuckLine(result, itemName, false);
+                    return;
+                }
+            }
+        }));
     }
 
     /**
