@@ -374,7 +374,7 @@ class LuckTrackerPanel extends PluginPanel
                         {
                             tracked.add(key);
                         }
-                        else if (result.snapshot == null)
+                        else if (result.needsSnapshot())
                         {
                             needsSnapshot.add(key);
                         }

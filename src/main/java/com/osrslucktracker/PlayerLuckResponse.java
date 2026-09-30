@@ -79,6 +79,18 @@ class PlayerLuckResponse
 
         // Backfilled flat-rate items with a KC snapshot only (SnapshotLuck).
         Snapshot snapshot;
+
+        // Backfilled rows only, in the token-checked response: whether a
+        // snapshot is stored, even when none is shown (pooled pages hide
+        // theirs). Null from a backend older than this field.
+        @SerializedName("snapshot_stored")
+        Boolean snapshotStored;
+
+        /** True when the backend holds no KC snapshot for this backfilled row. */
+        boolean needsSnapshot()
+        {
+            return backfilled && (snapshotStored != null ? !snapshotStored : snapshot == null);
+        }
     }
 
     static class Snapshot
