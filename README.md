@@ -62,9 +62,12 @@ on anything fragile, and fails closed when something does change:
 - **KC snapshot.** The same read also takes the page header's kill
   count and each obtained slot's quantity (`LogPageSnapshot`, saved as
   `logSnapshots`), and an import sends them with each item so the site
-  can estimate luck from "k copies by N KC". It's left out when the
-  header has no counter or several (Dagannoth Kings, The Gauntlet's two
-  modes), for stackable slots (their quantity counts items, not drops),
+  can estimate luck from "k copies by N KC". A personal best time is
+  never read as a count. Tempoross uses "Reward permits claimed", since
+  its rates are per permit (`ROLL_COUNTERS` in `LogPageSnapshot`). It's
+  left out when the header has no counter or several (Dagannoth Kings,
+  The Gauntlet's two modes, Wintertodt, whose carts give a
+  points-dependent number of rolls), for stackable slots (their quantity counts items, not drops),
   and for shared items (their quantity spans every source). Items
   imported before snapshots existed are offered as "Add luck estimates".
 - **Failing closed.** If the cache layout isn't recognised, import is
@@ -157,10 +160,10 @@ The backend URL and publishable key are hidden config items
   with no KC, flagged `is_backfilled`, so the website never shows them
   as a real percentage. Flat-rate items with a KC snapshot get a
   separate, clearly marked estimate from their count instead.
-- **The KC snapshot's header read is unverified in-game.** Which header
-  children hold the kill counts follows the Collection Log plugin-hub
-  plugin's reading; if a page's header doesn't parse to exactly one
-  count, that page just imports without snapshots.
+- **KC snapshot header reads are verified in-game** for Barrows,
+  Brutus, Royal Titans, Moons of Peril, Scurrius and Tempoross. A page
+  whose header doesn't parse logs its header text at debug level and
+  imports without snapshots.
 - **The import needs you to click through the log pages.** The game only
   sends a page's contents when that page is opened, so there's nothing
   to read until you open it. The panel lists which pages are still

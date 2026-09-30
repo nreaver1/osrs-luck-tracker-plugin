@@ -17,6 +17,7 @@ import net.runelite.api.events.ScriptPreFired;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarClientID;
+import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.chat.ChatMessageManager;
@@ -188,6 +189,7 @@ public class LuckTrackerPlugin extends Plugin
     private final Map<String, Set<Integer>> obtainedByPage = new ConcurrentHashMap<>();
     private final Map<String, LogPageSnapshot> snapshotByPage = new ConcurrentHashMap<>();
     private final Set<String> mismatchWarnedPages = new HashSet<>();
+    private final Set<String> noSnapshotLoggedPages = new HashSet<>();
     private volatile CollectionLogIndex collectionLogIndex;
     private volatile boolean collectionLogIndexFailed;
     private String scannedAccountHash;
@@ -582,7 +584,12 @@ public class LuckTrackerPlugin extends Plugin
             changed = true;
         }
 
-        Integer kc = LogPageSnapshot.parseKillCount(openLogPageHeaderLines());
+        List<String> headerLines = openLogPageHeaderLines();
+        Integer kc = LogPageSnapshot.parseKillCount(title, headerLines);
+        if (kc == null && noSnapshotLoggedPages.add(title))
+        {
+            log.debug("Collection log page '{}' has no single kill count, so no snapshot (header: {})", title, headerLines);
+        }
         if (kc != null)
         {
             LogPageSnapshot prior = snapshotByPage.get(title);
@@ -780,6 +787,7 @@ public class LuckTrackerPlugin extends Plugin
         obtainedByPage.clear();
         snapshotByPage.clear();
         mismatchWarnedPages.clear();
+        noSnapshotLoggedPages.clear();
         scannedAccountHash = null;
         adventureLogOwner = null;
         notifyPanel();
@@ -1009,9 +1017,12 @@ public class LuckTrackerPlugin extends Plugin
         boolean includeSource = onPage.isEmpty() || shown.size() > 1;
 
         int iconIndex = chatIconId == -1 ? -1 : chatIconManager.chatIconIndex(chatIconId);
+        // Same test RuneLite's ChatMessageManager uses: the box is only see-through in resizable mode.
+        LuckCheckMessage.Palette palette = LuckCheckMessage.Palette.forChatbox(
+            client.isResized() && client.getVarbitValue(VarbitID.CHATBOX_TRANSPARENCY) == 1);
         for (PlayerLuckResponse.Result result : shown)
         {
-            String line = LuckCheckMessage.format(result, itemName, includeSource, iconIndex);
+            String line = LuckCheckMessage.format(result, itemName, includeSource, iconIndex, palette);
             if (line != null)
             {
                 chatMessageManager.queue(QueuedMessage.builder()

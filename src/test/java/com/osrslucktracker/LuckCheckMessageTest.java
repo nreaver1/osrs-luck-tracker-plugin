@@ -30,11 +30,23 @@ class LuckCheckMessageTest
     {
         String line = format(result(49, "desert", true, false, false), false, -1);
         assertEquals("Soiled page: first obtained at 49 KC - bone dry.", Text.removeTags(line));
-        assertTrue(line.contains("<col=e01e1e>49 KC"), line);
-        assertTrue(line.contains("<col=e01e1e>bone dry"), line);
+        assertTrue(line.contains("<col=b00000>49 KC"), line);
+        assertTrue(line.contains("<col=b00000>bone dry"), line);
 
-        assertTrue(format(result(3, "spooned", true, false, false), false, -1).contains("<col=00a000>3 KC"));
-        assertTrue(format(result(20, "average", true, false, false), false, -1).contains("<col=e67e00>average"));
+        assertTrue(format(result(3, "spooned", true, false, false), false, -1).contains("<col=006000>3 KC"));
+        assertTrue(format(result(20, "average", true, false, false), false, -1).contains("<col=0000ff>average"));
+    }
+
+    @Test
+    void usesLightColorsOnATransparentChatbox()
+    {
+        LuckCheckMessage.Palette light = LuckCheckMessage.Palette.TRANSPARENT;
+        assertTrue(LuckCheckMessage.format(result(20, "average", true, false, false), "Soiled page", false, -1, light)
+            .contains("<col=7fb8ff>average"));
+        assertTrue(LuckCheckMessage.format(result(3, "spooned", true, false, false), "Soiled page", false, -1, light)
+            .contains("<col=4ce24c>3 KC"));
+        assertTrue(LuckCheckMessage.format(result(49, "dry", true, false, false), "Soiled page", false, -1, light)
+            .contains("<col=ff5a5a>dry"));
     }
 
     @Test
@@ -74,12 +86,13 @@ class LuckCheckMessageTest
 
         String line = format(r, false, -1);
         assertEquals("Soiled page: logged before tracking, 1 by 1,100 KC - dry (estimated).", Text.removeTags(line));
-        assertTrue(line.contains("<col=e01e1e>1 by 1,100 KC"), line);
+        assertTrue(line.contains("<col=b00000>1 by 1,100 KC"), line);
     }
 
+    /** On the opaque chatbox, the default look. */
     private static String format(PlayerLuckResponse.Result result, boolean includeSource, int iconIndex)
     {
-        return LuckCheckMessage.format(result, "Soiled page", includeSource, iconIndex);
+        return LuckCheckMessage.format(result, "Soiled page", includeSource, iconIndex, LuckCheckMessage.Palette.OPAQUE);
     }
 
     private static PlayerLuckResponse.Result result(Integer kc, String label, boolean supported, boolean estimated,

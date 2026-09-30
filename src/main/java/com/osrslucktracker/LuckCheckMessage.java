@@ -13,16 +13,38 @@ import java.util.regex.Pattern;
  * collection log ("You have received 4x Soiled page."), and the line the
  * plugin adds under it with that drop's recorded KC and luck, e.g.
  * "(icon) Soiled page: first obtained at 49 KC - dry." with the KC and
- * label in the luck color.
+ * label in the luck color. The colors follow the chatbox: dark ones on
+ * the opaque parchment box, light ones on the transparent box.
  */
 final class LuckCheckMessage
 {
     private static final Pattern CHECK_PATTERN = Pattern.compile("^You have received (?:[\\d,]+ ?x )?(.+?)\\.?$");
 
-    // Readable on both the opaque (parchment) and transparent (dark) chatbox.
-    static final Color SPOONED_COLOR = new Color(0x00A000);
-    static final Color AVERAGE_COLOR = new Color(0xE67E00);
-    static final Color DRY_COLOR = new Color(0xE01E1E);
+    /** Luck colors for one chatbox style. */
+    enum Palette
+    {
+        // The game's own highlight shades on parchment: dark green, the
+        // blue of quest and system messages, dark red.
+        OPAQUE(new Color(0x006000), new Color(0x0000FF), new Color(0xB00000)),
+        // Light shades that hold up on the dark, see-through box.
+        TRANSPARENT(new Color(0x4CE24C), new Color(0x7FB8FF), new Color(0xFF5A5A));
+
+        final Color spooned;
+        final Color average;
+        final Color dry;
+
+        Palette(Color spooned, Color average, Color dry)
+        {
+            this.spooned = spooned;
+            this.average = average;
+            this.dry = dry;
+        }
+
+        static Palette forChatbox(boolean transparent)
+        {
+            return transparent ? TRANSPARENT : OPAQUE;
+        }
+    }
 
     private LuckCheckMessage()
     {
@@ -47,7 +69,8 @@ final class LuckCheckMessage
      * distribution have no luck label; neither is ever given one. A
      * backfilled drop with a KC snapshot shows that instead, as an estimate.
      */
-    static String format(PlayerLuckResponse.Result result, String itemName, boolean includeSource, int iconIndex)
+    static String format(PlayerLuckResponse.Result result, String itemName, boolean includeSource, int iconIndex,
+        Palette palette)
     {
         ChatMessageBuilder message = new ChatMessageBuilder();
         if (iconIndex >= 0)
@@ -61,7 +84,7 @@ final class LuckCheckMessage
         {
             // Rates the count on the log page at import, not a drop.
             PlayerLuckResponse.Snapshot snap = result.snapshot;
-            Color color = labelColor(snap.label);
+            Color color = labelColor(snap.label, palette);
             return message.append("logged before tracking" + from + ", ")
                 .append(color, String.format(Locale.ROOT, "%,d by %,d KC", snap.quantity, snap.kc))
                 .append(" - ").append(color, labelText(snap.label))
@@ -82,7 +105,7 @@ final class LuckCheckMessage
         {
             return message.append("first obtained at " + kc + from + " (no luck rating for this drop).").build();
         }
-        Color color = labelColor(result.label);
+        Color color = labelColor(result.label, palette);
         message.append("first obtained at ").append(color, kc).append(from + " - ").append(color, labelText);
         if (result.estimated)
         {
@@ -112,16 +135,16 @@ final class LuckCheckMessage
         }
     }
 
-    private static Color labelColor(String label)
+    private static Color labelColor(String label, Palette palette)
     {
         switch (label)
         {
             case "spooned":
-                return SPOONED_COLOR;
+                return palette.spooned;
             case "average":
-                return AVERAGE_COLOR;
+                return palette.average;
             default:
-                return DRY_COLOR;
+                return palette.dry;
         }
     }
 }

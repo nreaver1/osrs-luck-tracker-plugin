@@ -5,6 +5,7 @@ import net.runelite.client.util.Text;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -19,8 +20,10 @@ import java.util.regex.Pattern;
  */
 final class LogPageSnapshot
 {
-    // "Barrows Chests: <col=ff0000>200</col>" once tags are stripped.
-    private static final Pattern KC_LINE = Pattern.compile("^(.+?):\\s*([0-9][0-9,]*)$");
+    // "Barrows Chests: <col=ff0000>200</col>" once tags are stripped. The
+    // label can't contain a colon, so "Personal Best: 0:02" isn't read as
+    // a count of 2.
+    private static final Pattern KC_LINE = Pattern.compile("^([^:]+):\\s*([0-9][0-9,]*)$");
     // The header's "Obtained: 12/24" line never matches KC_LINE (the slash),
     // but a future "Obtained: 12" shouldn't be read as a kill count either.
     private static final String OBTAINED_LABEL = "obtained";
@@ -35,15 +38,25 @@ final class LogPageSnapshot
         this.quantities = Collections.unmodifiableMap(new TreeMap<>(quantities));
     }
 
+    // Pages whose catalog rates roll per something other than a kill, keyed
+    // by page title, with the header counter that counts those rolls. Only
+    // for pages where one roll per count holds: Tempoross's reward pool is
+    // rated per reward permit. Wintertodt isn't here: a claimed reward cart
+    // gives a points-dependent number of rolls, so neither counter fits.
+    private static final Map<String, String> ROLL_COUNTERS = Collections.singletonMap(
+        "Tempoross", "Reward permits claimed");
+
     /**
-     * The page's kill count from its header lines (title excluded), or
-     * null unless exactly one line is a count. Pages with several counters
-     * (Dagannoth Kings, The Gauntlet's normal and corrupted) or none can't
-     * say which kills an item came from.
+     * The page's roll count from its header lines (title excluded): the
+     * counter {@link #ROLL_COUNTERS} names for the page, or else its only
+     * count. Null when that counter is missing, or when a page not listed
+     * there has several counters (Dagannoth Kings, The Gauntlet's normal
+     * and corrupted) or none, since then it can't say which count an item
+     * came from.
      */
-    static Integer parseKillCount(List<String> headerLines)
+    static Integer parseKillCount(String page, List<String> headerLines)
     {
-        Integer found = null;
+        Map<String, Integer> counts = new HashMap<>();
         for (String line : headerLines)
         {
             if (line == null)
@@ -51,24 +64,30 @@ final class LogPageSnapshot
                 continue;
             }
             Matcher m = KC_LINE.matcher(Text.removeTags(line).replace(' ', ' ').trim());
-            if (!m.matches() || m.group(1).trim().equalsIgnoreCase(OBTAINED_LABEL))
+            String label = m.matches() ? m.group(1).trim().toLowerCase(Locale.ROOT) : null;
+            if (label == null || label.equals(OBTAINED_LABEL))
             {
                 continue;
             }
-            if (found != null)
-            {
-                return null;
-            }
             try
             {
-                found = Integer.parseInt(m.group(2).replace(",", ""));
+                if (counts.put(label, Integer.parseInt(m.group(2).replace(",", ""))) != null)
+                {
+                    return null; // the same label twice: not a layout we know
+                }
             }
             catch (NumberFormatException e)
             {
                 return null;
             }
         }
-        return found;
+
+        String rollCounter = ROLL_COUNTERS.get(page);
+        if (rollCounter != null)
+        {
+            return counts.get(rollCounter.toLowerCase(Locale.ROOT));
+        }
+        return counts.size() == 1 ? counts.values().iterator().next() : null;
     }
 
     /**
