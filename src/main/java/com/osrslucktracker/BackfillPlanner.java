@@ -11,6 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
@@ -250,10 +251,12 @@ final class BackfillPlanner
         final List<HuntingItem> toSync = new ArrayList<>();
         /** Pairs the backend is hunting whose slot now reads obtained. */
         final List<Candidate> obtained = new ArrayList<>();
+        /** Whole page reads that differ from the backend's (migration 0009). */
+        final List<SyncHuntingRequest.Page> pages = new ArrayList<>();
 
         boolean isEmpty()
         {
-            return toSync.isEmpty() && obtained.isEmpty();
+            return toSync.isEmpty() && obtained.isEmpty() && pages.isEmpty();
         }
     }
 
@@ -265,23 +268,29 @@ final class BackfillPlanner
      * the slots read as obtained add up to the header's "Obtained: x/y", so
      * a page drawn mid-fade can't list owned items as missing.
      *
+     * The same consistent pages are also sent whole (kill count, obtained
+     * ids, quantities) when they differ from the backend's copy, which it
+     * uses to rate pages whose items share one drop rate.
+     *
      * @param serverHunting {@link Candidate#key()} -> kill count the backend holds
+     * @param serverPages   catalog source -> the page read the backend holds
      */
     static HuntingPlan planHunting(
         Collection<CatalogEntry> catalog,
         Map<String, Set<Integer>> obtainedByPage,
         CollectionLogIndex index,
         Map<String, LogPageSnapshot> snapshots,
-        Map<String, Integer> serverHunting)
+        Map<String, Integer> serverHunting,
+        Map<String, SyncHuntingRequest.Page> serverPages)
     {
         Map<String, Set<Integer>> flatBySource = new HashMap<>();
         Map<String, String> sourceByNormalizedName = new HashMap<>();
         for (CatalogEntry entry : catalog)
         {
+            sourceByNormalizedName.putIfAbsent(normalize(entry.sourceName), entry.sourceName);
             if (FLAT_RATE.equals(entry.distributionType))
             {
                 flatBySource.computeIfAbsent(entry.sourceName, k -> new TreeSet<>()).add(entry.itemId);
-                sourceByNormalizedName.putIfAbsent(normalize(entry.sourceName), entry.sourceName);
             }
         }
 
@@ -298,7 +307,14 @@ final class BackfillPlanner
             {
                 continue;
             }
-            for (int itemId : flatBySource.get(source))
+
+            SyncHuntingRequest.Page read = pageRead(source, snapshot, obtained);
+            if (!samePage(read, serverPages.get(source)))
+            {
+                plan.pages.add(read);
+            }
+
+            for (int itemId : flatBySource.getOrDefault(source, Collections.emptySet()))
             {
                 if (!index.itemsOn(page).contains(itemId))
                 {
@@ -320,6 +336,28 @@ final class BackfillPlanner
             }
         }
         return plan;
+    }
+
+    private static SyncHuntingRequest.Page pageRead(String source, LogPageSnapshot snapshot, Set<Integer> obtained)
+    {
+        Map<String, Integer> quantities = new TreeMap<>();
+        snapshot.quantities.forEach((id, q) ->
+        {
+            if (obtained.contains(id))
+            {
+                quantities.put(String.valueOf(id), q);
+            }
+        });
+        return new SyncHuntingRequest.Page(source, snapshot.kc, new ArrayList<>(new TreeSet<>(obtained)), quantities);
+    }
+
+    private static boolean samePage(SyncHuntingRequest.Page read, SyncHuntingRequest.Page held)
+    {
+        return held != null && held.kc == read.kc
+            && new TreeSet<>(held.obtained == null ? Collections.<Integer>emptyList() : held.obtained)
+                .equals(new TreeSet<>(read.obtained))
+            && new TreeMap<>(held.quantities == null ? Collections.<String, Integer>emptyMap() : held.quantities)
+                .equals(read.quantities);
     }
 
     /** True if the item is a collection log slot on the page for this catalog source. */

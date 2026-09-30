@@ -220,7 +220,7 @@ class BackfillPlannerTest
         snapshots.put("General Graardor", new LogPageSnapshot(1100, Collections.emptyMap(), 1));
 
         BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
-            pages("General Graardor", set(BANDOS_CHESTPLATE)), index, snapshots, Collections.emptyMap());
+            pages("General Graardor", set(BANDOS_CHESTPLATE)), index, snapshots, Collections.emptyMap(), Collections.emptyMap());
 
         // The shard counts too: an empty slot means none from any source.
         assertEquals(keys(GODSWORD_SHARD_1 + "|General Graardor"), huntingKeys(plan.toSync));
@@ -240,7 +240,7 @@ class BackfillPlannerTest
 
         BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
             pages("General Graardor", set(BANDOS_CHESTPLATE), "Kree'arra", set()),
-            index, snapshots, Collections.emptyMap());
+            index, snapshots, Collections.emptyMap(), Collections.emptyMap());
 
         assertTrue(plan.isEmpty());
     }
@@ -257,7 +257,7 @@ class BackfillPlannerTest
         server.put(ARMADYL_HELMET + "|Kree'arra", 400);           // more kills since
 
         BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
-            pages("General Graardor", set(BANDOS_CHESTPLATE), "Kree'arra", set()), index, snapshots, server);
+            pages("General Graardor", set(BANDOS_CHESTPLATE), "Kree'arra", set()), index, snapshots, server, Collections.emptyMap());
 
         assertEquals(keys(ARMADYL_HELMET + "|Kree'arra", GODSWORD_SHARD_1 + "|Kree'arra"), huntingKeys(plan.toSync));
         assertEquals(keys(BANDOS_CHESTPLATE + "|General Graardor"), keysOf(plan.obtained));
@@ -271,9 +271,37 @@ class BackfillPlannerTest
         snapshots.put("Zulrah", new LogPageSnapshot(300, Collections.emptyMap(), 0));
 
         BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
-            pages("Zulrah", set()), index, snapshots, Collections.emptyMap());
+            pages("Zulrah", set()), index, snapshots, Collections.emptyMap(), Collections.emptyMap());
 
-        assertTrue(plan.isEmpty());
+        assertTrue(plan.toSync.isEmpty());
+        assertTrue(plan.obtained.isEmpty());
+    }
+
+    @Test
+    void consistentPagesAreSentWholeUntilTheBackendHasThem()
+    {
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        Map<Integer, Integer> quantities = new HashMap<>();
+        quantities.put(BANDOS_CHESTPLATE, 2);
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, quantities, 1));
+        snapshots.put("Kree'arra", new LogPageSnapshot(500, Collections.emptyMap(), 2)); // mid-fade: header says 2
+
+        Map<String, Set<Integer>> read = pages("General Graardor", set(BANDOS_CHESTPLATE), "Kree'arra", set());
+        BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog, read, index, snapshots,
+            Collections.emptyMap(), Collections.emptyMap());
+
+        assertEquals(1, plan.pages.size());
+        SyncHuntingRequest.Page page = plan.pages.get(0);
+        assertEquals("General Graardor", page.sourceName);
+        assertEquals(1100, page.kc);
+        assertEquals(Collections.singletonList(BANDOS_CHESTPLATE), page.obtained);
+        assertEquals(Integer.valueOf(2), page.quantities.get(String.valueOf(BANDOS_CHESTPLATE)));
+
+        // Once the backend holds the same read, it isn't sent again.
+        Map<String, SyncHuntingRequest.Page> server = new HashMap<>();
+        server.put("General Graardor", page);
+        assertTrue(BackfillPlanner.planHunting(catalog, read, index, snapshots, Collections.emptyMap(), server)
+            .pages.isEmpty());
     }
 
     @Test

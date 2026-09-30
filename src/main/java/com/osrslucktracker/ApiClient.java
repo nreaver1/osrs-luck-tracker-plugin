@@ -299,6 +299,10 @@ class ApiClient
                     {
                         parsed.hunting = new ArrayList<>();
                     }
+                    if (parsed.logPages == null)
+                    {
+                        parsed.logPages = new ArrayList<>();
+                    }
                     onResult.accept(parsed);
                 }
                 catch (Exception e)
@@ -408,7 +412,7 @@ class ApiClient
     }
 
     void syncHunting(String installToken, String accountHash, List<SyncHuntingRequest.Item> hunting,
-        List<SyncHuntingRequest.Pair> obtained, Consumer<SyncHuntingResponse> onResult)
+        List<SyncHuntingRequest.Pair> obtained, List<SyncHuntingRequest.Page> pages, Consumer<SyncHuntingResponse> onResult)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -417,7 +421,7 @@ class ApiClient
             return;
         }
 
-        SyncHuntingRequest body = new SyncHuntingRequest(installToken, accountHash, hunting, obtained);
+        SyncHuntingRequest body = new SyncHuntingRequest(installToken, accountHash, hunting, obtained, pages);
         Request request = new Request.Builder()
             .url(config.apiBaseUrl() + "/sync-hunting")
             .header("apikey", config.publishableKey())

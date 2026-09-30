@@ -64,6 +64,8 @@ class LuckTrackerPanel extends PluginPanel
     private final Map<String, Set<String>> needsSnapshotByAccount = new HashMap<>();
     // account hash -> still-hunting key -> kill count the backend holds
     private final Map<String, Map<String, Integer>> huntingByAccount = new HashMap<>();
+    // account hash -> catalog source -> page read the backend holds
+    private final Map<String, Map<String, SyncHuntingRequest.Page>> pagesByAccount = new HashMap<>();
     private String recordedFetchInFlight;
     private final Map<String, String> itemNames = new HashMap<>();
     // account hash -> Candidate keys already submitted this session
@@ -355,6 +357,12 @@ class LuckTrackerPanel extends PluginPanel
                         hunting.put(new BackfillPlanner.Candidate(h.itemId, h.sourceName).key(), h.kc);
                     }
                     huntingByAccount.put(accountHash, hunting);
+                    Map<String, SyncHuntingRequest.Page> pages = new HashMap<>();
+                    for (PlayerLuckResponse.LogPage p : response.logPages)
+                    {
+                        pages.put(p.sourceName, new SyncHuntingRequest.Page(p.sourceName, p.kc, p.obtained, p.quantities));
+                    }
+                    pagesByAccount.put(accountHash, pages);
                     Set<String> keys = new HashSet<>();
                     Set<String> tracked = new HashSet<>();
                     Set<String> needsSnapshot = new HashSet<>();
@@ -498,8 +506,9 @@ class LuckTrackerPanel extends PluginPanel
         Map<String, Integer> serverHunting = huntingByAccount.get(accountHash);
         if (serverHunting != null)
         {
-            huntingPlan = BackfillPlanner.planHunting(
-                catalog, plugin.getObtainedByPage(), index, plugin.getSnapshotByPage(), serverHunting);
+            huntingPlan = BackfillPlanner.planHunting(catalog, plugin.getObtainedByPage(), index,
+                plugin.getSnapshotByPage(), serverHunting,
+                pagesByAccount.getOrDefault(accountHash, Collections.emptyMap()));
         }
 
         StringBuilder summary = new StringBuilder("<html>");
@@ -516,6 +525,12 @@ class LuckTrackerPanel extends PluginPanel
         {
             summary.append("<br>").append(huntingChanges)
                 .append(huntingChanges == 1 ? " still-hunting item" : " still-hunting items")
+                .append(" to update on the website.");
+        }
+        if (!huntingPlan.pages.isEmpty())
+        {
+            summary.append("<br>").append(huntingPlan.pages.size())
+                .append(huntingPlan.pages.size() == 1 ? " log page" : " log pages")
                 .append(" to update on the website.");
         }
         if (plan.pagesRead > 0)
@@ -572,7 +587,7 @@ class LuckTrackerPanel extends PluginPanel
         }
         else if (!importInFlight && !huntingPlan.isEmpty())
         {
-            importButton.setText("Update still hunting");
+            importButton.setText("Update the website");
             importButton.setEnabled(true);
         }
     }
@@ -591,12 +606,13 @@ class LuckTrackerPanel extends PluginPanel
         {
             importInFlight = false;
             String updated = hunting.isEmpty() ? "" : "Updated " + (items.size() + hunting.obtained.size())
-                + " still-hunting item(s).";
+                + " still-hunting item(s) and " + hunting.pages.size() + " log page(s).";
             statusLabel.setText("<html>" + (imported + updated).trim() + "</html>");
             // Reload what the backend holds, so the next plan diffs against it.
             if (!hunting.isEmpty())
             {
                 huntingByAccount.remove(accountHash);
+                pagesByAccount.remove(accountHash);
                 recordedByAccount.remove(accountHash);
             }
             refresh();
@@ -609,15 +625,18 @@ class LuckTrackerPanel extends PluginPanel
             chunk.add(new SyncHuntingRequest.Item(h.itemId, h.sourceName, h.kc));
         }
         List<SyncHuntingRequest.Pair> obtained = new ArrayList<>();
+        List<SyncHuntingRequest.Page> pages = new ArrayList<>();
         if (first)
         {
             for (BackfillPlanner.Candidate c : hunting.obtained)
             {
                 obtained.add(new SyncHuntingRequest.Pair(c.itemId, c.sourceName));
             }
+            // Well under the backend's 200 per request: the log has about 120 boss pages.
+            pages.addAll(hunting.pages);
         }
 
-        apiClient.syncHunting(token, accountHash, chunk, obtained, result ->
+        apiClient.syncHunting(token, accountHash, chunk, obtained, pages, result ->
             SwingUtilities.invokeLater(() ->
             {
                 if (result == null)
@@ -626,6 +645,7 @@ class LuckTrackerPanel extends PluginPanel
                     statusLabel.setText("<html>" + imported + "Couldn't update still hunting &mdash; "
                         + "check your API settings and try again.</html>");
                     huntingByAccount.remove(accountHash);
+                    pagesByAccount.remove(accountHash);
                     recordedByAccount.remove(accountHash);
                     refresh();
                     return;
@@ -675,12 +695,12 @@ class LuckTrackerPanel extends PluginPanel
         }
         else
         {
-            question = "Update your \"still hunting\" list on the website?\n\n"
-                + "It shows the drops your log pages are missing, with their kill counts.\n";
+            question = "Update your log pages and \"still hunting\" list on the website?\n\n"
+                + "They show what your log pages have and are missing, with their kill counts.\n";
         }
         if (!hunting.isEmpty() && !toSend.isEmpty())
         {
-            question += "\nYour \"still hunting\" list on the website updates too.\n";
+            question += "\nYour log pages and \"still hunting\" list on the website update too.\n";
         }
         int choice = JOptionPane.showConfirmDialog(
             this,
