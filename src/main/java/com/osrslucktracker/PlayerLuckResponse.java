@@ -16,7 +16,13 @@ class PlayerLuckResponse
     List<Result> results;
 
     // Items still being hunted (migration 0008); null from an older backend.
+    // Hides pooled and recorded pairs, so it's for display.
     List<Hunting> hunting;
+
+    // Every stored hunting row, unfiltered; only in the token-checked
+    // response, null from an older backend. What the plugin diffs against.
+    @SerializedName("hunting_rows")
+    List<Hunting> huntingRows;
 
     // The page reads the backend holds (migration 0009); only in the
     // token-checked POST response, null from an older backend.

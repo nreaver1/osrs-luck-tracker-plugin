@@ -82,6 +82,12 @@ on anything fragile, and fails closed when something does change:
   The same button sends each consistent page whole (kill count,
   obtained items, quantities) when it differs from the backend's copy,
   which rates pages like Barrows as a whole.
+- **Automatic after the first import.** The player reads their log once
+  and presses the import button once. After that the panel syncs by
+  itself a few seconds after log reads settle (new imports, estimates,
+  still-hunting rows and page reads), kill counts from chat are sent in
+  batches to `/update-kc`, and tracked drops update their page on the
+  backend. The button then just shows "Up to date" or "Syncing...".
 - **Failing closed.** If the cache layout isn't recognised, import is
   disabled with a message. If a drawn page doesn't match its cache
   entry, that page is skipped. Only (item, source) pairs from the

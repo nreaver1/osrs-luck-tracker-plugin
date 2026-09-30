@@ -16,6 +16,7 @@ import javax.inject.Singleton;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -406,6 +407,46 @@ class ApiClient
                 {
                     log.warn("Failed to parse backfill-drop batch response", e);
                     onResult.accept(null);
+                }
+            }
+        });
+    }
+
+    /**
+     * Kill counts seen in chat since the last send, for /update-kc. Fire and
+     * forget: the next batch or the next log read catches up after a failure.
+     */
+    void updateKillCounts(String installToken, String accountHash, Map<String, Integer> counts)
+    {
+        if (config.apiBaseUrl().isEmpty() || counts.isEmpty())
+        {
+            return;
+        }
+        List<UpdateKcRequest.Count> list = new ArrayList<>();
+        counts.forEach((source, kc) -> list.add(new UpdateKcRequest.Count(source, kc)));
+        Request request = new Request.Builder()
+            .url(config.apiBaseUrl() + "/update-kc")
+            .header("apikey", config.publishableKey())
+            .post(RequestBody.create(JSON, gson.toJson(new UpdateKcRequest(installToken, accountHash, list))))
+            .build();
+
+        httpClient.newCall(request).enqueue(new Callback()
+        {
+            @Override
+            public void onFailure(Call call, IOException e)
+            {
+                log.debug("Update-kc call failed ({} counts)", list.size(), e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response)
+            {
+                try (Response r = response)
+                {
+                    if (!r.isSuccessful())
+                    {
+                        log.debug("Update-kc returned HTTP {} ({} counts)", r.code(), list.size());
+                    }
                 }
             }
         });

@@ -309,7 +309,11 @@ final class BackfillPlanner
             }
 
             SyncHuntingRequest.Page read = pageRead(source, snapshot, obtained);
-            if (!samePage(read, serverPages.get(source)))
+            SyncHuntingRequest.Page heldPage = serverPages.get(source);
+            // The backend raises a stored page's kill count from chat and
+            // tracked drops between reads, so an older read than it holds is
+            // left alone rather than sent again and again to be ignored.
+            if (heldPage == null || read.kc > heldPage.kc || (read.kc == heldPage.kc && !samePage(read, heldPage)))
             {
                 plan.pages.add(read);
             }

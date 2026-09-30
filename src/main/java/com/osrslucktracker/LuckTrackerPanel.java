@@ -78,6 +78,18 @@ class LuckTrackerPanel extends PluginPanel
     private int importSnapshotUpdates;
     // Still-hunting changes sent once the import's batches are done.
     private BackfillPlanner.HuntingPlan importHunting = new BackfillPlanner.HuntingPlan();
+    // Whether the sync in flight was started automatically (no dialog, quieter status).
+    private boolean importAuto;
+
+    // Once an account has synced from the button, later changes sync on
+    // their own, a few seconds after the last log page read settles.
+    private static final int AUTO_SYNC_DELAY_MS = 3_000;
+    private static final long AUTO_SYNC_BACKOFF_MS = 120_000;
+    private final javax.swing.Timer autoSyncTimer = new javax.swing.Timer(AUTO_SYNC_DELAY_MS, e -> runAutoSync());
+    // What the last automatic sync sent. If the next plan is identical the
+    // backend didn't take it, so it isn't sent again until something changes.
+    private String lastAutoFingerprint;
+    private long autoSyncBlockedUntilMs;
 
     LuckTrackerPanel(LuckTrackerPlugin plugin, ApiClient apiClient, ItemManager itemManager, ClientThread clientThread)
     {
@@ -352,7 +364,10 @@ class LuckTrackerPanel extends PluginPanel
                 {
                     List<PlayerLuckResponse.Result> results = response.results;
                     Map<String, Integer> hunting = new HashMap<>();
-                    for (PlayerLuckResponse.Hunting h : response.hunting)
+                    // The raw rows, not the display list, which hides pooled pairs.
+                    List<PlayerLuckResponse.Hunting> held = response.huntingRows != null
+                        ? response.huntingRows : response.hunting;
+                    for (PlayerLuckResponse.Hunting h : held)
                     {
                         hunting.put(new BackfillPlanner.Candidate(h.itemId, h.sourceName).key(), h.kc);
                     }
@@ -363,6 +378,12 @@ class LuckTrackerPanel extends PluginPanel
                         pages.put(p.sourceName, new SyncHuntingRequest.Page(p.sourceName, p.kc, p.obtained, p.quantities));
                     }
                     pagesByAccount.put(accountHash, pages);
+                    // Page reads only come from a sync, so this account has synced
+                    // before (from an older version that didn't keep the flag).
+                    if (!response.logPages.isEmpty())
+                    {
+                        plugin.markLogSynced(accountHash);
+                    }
                     Set<String> keys = new HashSet<>();
                     Set<String> tracked = new HashSet<>();
                     Set<String> needsSnapshot = new HashSet<>();
@@ -509,6 +530,10 @@ class LuckTrackerPanel extends PluginPanel
             huntingPlan = BackfillPlanner.planHunting(catalog, plugin.getObtainedByPage(), index,
                 plugin.getSnapshotByPage(), serverHunting,
                 pagesByAccount.getOrDefault(accountHash, Collections.emptyMap()));
+            // A drop recorded since the page was read ended that hunt on the
+            // backend; the older read would only bring the row back.
+            Set<String> recorded = recordedKeys(accountHash);
+            huntingPlan.toSync.removeIf(h -> recorded.contains(h.key()));
         }
 
         StringBuilder summary = new StringBuilder("<html>");
@@ -569,6 +594,20 @@ class LuckTrackerPanel extends PluginPanel
             importPages.setText(pages.append("</html>").toString());
         }
 
+        boolean pending = !plan.ready.isEmpty() || !plan.snapshotUpdates.isEmpty() || !huntingPlan.isEmpty();
+        if (plugin.isLogSynced(accountHash))
+        {
+            // The one-time import is done: keep the website in step on our own.
+            importButton.setText(importInFlight || pending ? "Syncing..." : "Up to date");
+            importButton.setEnabled(false);
+            if (pending && !importInFlight)
+            {
+                autoSyncTimer.setRepeats(false);
+                autoSyncTimer.restart();
+            }
+            return;
+        }
+
         if (!importInFlight && !plan.ready.isEmpty())
         {
             importButton.setText("Import " + plan.ready.size() + (plan.ready.size() == 1 ? " item" : " items"));
@@ -599,9 +638,11 @@ class LuckTrackerPanel extends PluginPanel
         if (hunting.isEmpty() || (!first && offset >= items.size()))
         {
             importInFlight = false;
+            plugin.markLogSynced(accountHash);
             String updated = hunting.isEmpty() ? "" : "Updated " + (items.size() + hunting.obtained.size())
                 + " still-hunting item(s) and " + hunting.pages.size() + " log page(s).";
-            statusLabel.setText("<html>" + (imported + updated).trim() + "</html>");
+            String done = (imported + updated).trim();
+            statusLabel.setText("<html>" + (importAuto ? "Synced automatically. " + done : done) + "</html>");
             // Reload what the backend holds, so the next plan diffs against it.
             if (!hunting.isEmpty())
             {
@@ -636,8 +677,9 @@ class LuckTrackerPanel extends PluginPanel
                 if (result == null)
                 {
                     importInFlight = false;
+                    autoSyncBlockedUntilMs = System.currentTimeMillis() + AUTO_SYNC_BACKOFF_MS;
                     statusLabel.setText("<html>" + imported + "Couldn't update still hunting &mdash; "
-                        + "check your API settings and try again.</html>");
+                        + "check your API settings. It'll try again shortly.</html>");
                     huntingByAccount.remove(accountHash);
                     pagesByAccount.remove(accountHash);
                     recordedByAccount.remove(accountHash);
@@ -715,6 +757,8 @@ class LuckTrackerPanel extends PluginPanel
         {
             question += "\nYour log pages and \"still hunting\" list on the website update too.\n";
         }
+        question += "\nAfter this, new log pages, kill counts and drops keep the website\n"
+            + "up to date on their own.\n";
         int choice = JOptionPane.showConfirmDialog(
             this,
             question + (toSend.isEmpty() ? "" : "Imports can't be undone."),
@@ -726,11 +770,69 @@ class LuckTrackerPanel extends PluginPanel
             return;
         }
 
+        startSync(token, accountHash, toSend, newItems, hunting, false);
+    }
+
+    /**
+     * Sends whatever the last plan found, without asking: runs a few
+     * seconds after log reads settle, for accounts that synced once from
+     * the button. Skips a plan identical to the last one it sent (the
+     * backend didn't take it, so resending would loop) and backs off after
+     * a failure. Runs on the EDT.
+     */
+    private void runAutoSync()
+    {
+        String accountHash = plugin.getCurrentAccountHash();
+        String token = plugin.getInstallToken();
+        if (importInFlight || !plugin.isLogSynced(accountHash) || token == null || token.isEmpty()
+            || System.currentTimeMillis() < autoSyncBlockedUntilMs)
+        {
+            return;
+        }
+        List<BackfillPlanner.Candidate> toSend = new ArrayList<>(readyToImport);
+        toSend.addAll(snapshotUpdates);
+        BackfillPlanner.HuntingPlan hunting = huntingPlan;
+        if (toSend.isEmpty() && hunting.isEmpty())
+        {
+            return;
+        }
+        String fingerprint = fingerprint(accountHash, toSend, hunting);
+        if (fingerprint.equals(lastAutoFingerprint))
+        {
+            return;
+        }
+        lastAutoFingerprint = fingerprint;
+        startSync(token, accountHash, toSend, readyToImport.size(), hunting, true);
+    }
+
+    private static String fingerprint(String accountHash, List<BackfillPlanner.Candidate> toSend,
+        BackfillPlanner.HuntingPlan hunting)
+    {
+        StringBuilder f = new StringBuilder(accountHash).append('#');
+        toSend.forEach(c -> f.append(c.key()).append(':').append(c.snapshotKc).append(','));
+        f.append('#');
+        hunting.toSync.forEach(h -> f.append(h.key()).append(':').append(h.kc).append(','));
+        f.append('#');
+        hunting.obtained.forEach(c -> f.append(c.key()).append(','));
+        f.append('#');
+        hunting.pages.forEach(pg -> f.append(pg.sourceName).append(':').append(pg.kc).append(':')
+            .append(pg.obtained).append(pg.quantities).append(','));
+        return f.toString();
+    }
+
+    private void startSync(String token, String accountHash, List<BackfillPlanner.Candidate> toSend, int newItems,
+        BackfillPlanner.HuntingPlan hunting, boolean auto)
+    {
         importInFlight = true;
+        importAuto = auto;
         importButton.setEnabled(false);
+        if (auto)
+        {
+            importButton.setText("Syncing...");
+        }
         importSnapshotUpdates = toSend.size() - newItems;
         importHunting = hunting;
-        statusLabel.setText(toSend.isEmpty() ? "Updating still hunting..." : "Importing " + toSend.size() + " item(s)...");
+        statusLabel.setText(toSend.isEmpty() ? "Updating the website..." : "Importing " + toSend.size() + " item(s)...");
         sendImportBatch(token, accountHash, toSend, 0, 0, 0, 0);
     }
 
@@ -764,6 +866,7 @@ class LuckTrackerPanel extends PluginPanel
                 if (result == null)
                 {
                     importInFlight = false;
+                    autoSyncBlockedUntilMs = System.currentTimeMillis() + AUTO_SYNC_BACKOFF_MS;
                     statusLabel.setText("<html>Import failed after " + inserted
                         + " item(s) &mdash; check your API settings and try again.</html>");
                     refresh();

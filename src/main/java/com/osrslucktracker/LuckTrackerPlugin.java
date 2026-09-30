@@ -97,6 +97,11 @@ public class LuckTrackerPlugin extends Plugin
     // Per-account config key: the visibility settings the backend last
     // stored for this account ("<showProfile>,<showOnLeaderboard>").
     private static final String SYNCED_SETTINGS_KEY = "syncedSettings";
+    // Per-account config key, set once the player has synced their log
+    // from the panel. From then on log reads and kill counts sync on their own.
+    private static final String LOG_SYNCED_KEY = "logSynced";
+    // Kill counts from chat are sent in batches at most this often, and at logout.
+    private static final long KC_SEND_INTERVAL_MS = 60_000;
     private static final long SETTINGS_RETRY_MS = 60_000;
 
     // Title of the adventure log opened in a POH ("The Exploits of X").
@@ -161,6 +166,10 @@ public class LuckTrackerPlugin extends Plugin
 
     // Lifetime KC as the game prints it, which the API needs for kc_received.
     private final Map<String, Integer> bossKillCounts = new HashMap<>();
+    // Kill counts not sent to /update-kc yet, for pendingKcAccount. Client thread only.
+    private final Map<String, Integer> pendingKc = new HashMap<>();
+    private String pendingKcAccount;
+    private long lastKcSendMs;
     // Kills seen since login, for the panel; one kill-count message is one kill.
     private final Map<String, Integer> sessionKillCounts = new HashMap<>();
     // New collection log slots since login, by the source they were credited to.
@@ -280,6 +289,7 @@ public class LuckTrackerPlugin extends Plugin
                 adventureLogOwner = null;
                 break;
             case LOGIN_SCREEN:
+                sendPendingKillCounts();
                 announcedAccountHash = null;
                 localPlayerName = null;
                 registeredAccountHash = null;
@@ -309,6 +319,10 @@ public class LuckTrackerPlugin extends Plugin
         }
         announceAccount();
         syncSettings();
+        if (!pendingKc.isEmpty() && System.currentTimeMillis() - lastKcSendMs >= KC_SEND_INTERVAL_MS)
+        {
+            sendPendingKillCounts();
+        }
 
         // The adventure log's title widget is only populated a tick after
         // it loads — same timing RuneLite's Chat Commands plugin handles.
@@ -910,6 +924,7 @@ public class LuckTrackerPlugin extends Plugin
         if (killCount != null)
         {
             bossKillCounts.put(killCount.source, killCount.kc);
+            queueKillCount(killCount);
             sessionKillCounts.merge(killCount.source, 1, Integer::sum);
             showSessionKillCounts();
             lastKillSource = killCount.source;
@@ -1187,6 +1202,58 @@ public class LuckTrackerPlugin extends Plugin
     Map<String, Set<Integer>> getObtainedByPage()
     {
         return new HashMap<>(obtainedByPage);
+    }
+
+    /** True once this account has synced its log from the panel; from then on syncing is automatic. */
+    boolean isLogSynced(String accountHash)
+    {
+        return accountHash != null
+            && "true".equals(configManager.getConfiguration("lucktracker", accountHash, LOG_SYNCED_KEY));
+    }
+
+    void markLogSynced(String accountHash)
+    {
+        if (accountHash != null && !isLogSynced(accountHash))
+        {
+            configManager.setConfiguration("lucktracker", accountHash, LOG_SYNCED_KEY, "true");
+        }
+    }
+
+    /**
+     * Queues a kill count for /update-kc, which keeps the website's still
+     * hunting rows and page reads current between log reads. Only for
+     * accounts that have synced their log, since there's nothing to raise
+     * otherwise. Client thread.
+     */
+    private void queueKillCount(KillCountMessage killCount)
+    {
+        String accountHash = getCurrentAccountHash();
+        if (!isLogSynced(accountHash))
+        {
+            return;
+        }
+        if (!accountHash.equals(pendingKcAccount))
+        {
+            sendPendingKillCounts();
+            pendingKcAccount = accountHash;
+        }
+        pendingKc.merge(killCount.source, killCount.kc, Math::max);
+    }
+
+    /** Sends the queued kill counts for the account they were seen on. Client thread. */
+    private void sendPendingKillCounts()
+    {
+        if (pendingKc.isEmpty() || pendingKcAccount == null)
+        {
+            return;
+        }
+        String token = configManager.getConfiguration("lucktracker", pendingKcAccount, "installToken");
+        if (token != null && !token.isEmpty())
+        {
+            apiClient.updateKillCounts(token, pendingKcAccount, new HashMap<>(pendingKc));
+        }
+        pendingKc.clear();
+        lastKcSendMs = System.currentTimeMillis();
     }
 
     /** Each read page's kill count and item quantities: page title -> snapshot. */

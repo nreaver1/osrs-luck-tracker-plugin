@@ -318,6 +318,13 @@ class BackfillPlannerTest
         server.put("General Graardor", page);
         assertTrue(BackfillPlanner.planHunting(catalog, read, index, snapshots, Collections.emptyMap(), server)
             .pages.isEmpty());
+
+        // Nor when the backend has moved it on from kill counts since
+        // (a higher kc, a tracked drop): this read is older, not different.
+        server.put("General Graardor", new SyncHuntingRequest.Page("General Graardor", 1150,
+            Arrays.asList(BANDOS_CHESTPLATE, 11834), Collections.singletonMap("11834", 1)));
+        assertTrue(BackfillPlanner.planHunting(catalog, read, index, snapshots, Collections.emptyMap(), server)
+            .pages.isEmpty());
     }
 
     @Test
