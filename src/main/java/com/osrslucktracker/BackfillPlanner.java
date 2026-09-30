@@ -338,6 +338,35 @@ final class BackfillPlanner
         return plan;
     }
 
+    /**
+     * Catalog pages read with a kill count whose obtained slots didn't add
+     * up to the header's "Obtained: x/y", or saved before that count was
+     * kept. {@link #planHunting} skips them, so their still-hunting rows
+     * and page read wait until the player opens them again.
+     */
+    static Set<String> pagesToReopen(
+        Collection<CatalogEntry> catalog,
+        Map<String, Set<Integer>> obtainedByPage,
+        Map<String, LogPageSnapshot> snapshots)
+    {
+        Set<String> sources = new HashSet<>();
+        for (CatalogEntry entry : catalog)
+        {
+            sources.add(normalize(entry.sourceName));
+        }
+        Set<String> reopen = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+        obtainedByPage.forEach((page, obtained) ->
+        {
+            LogPageSnapshot snapshot = snapshots.get(page);
+            if (sources.contains(normalize(page)) && snapshot != null && snapshot.kc > 0
+                && (snapshot.obtainedShown == null || snapshot.obtainedShown != obtained.size()))
+            {
+                reopen.add(page);
+            }
+        });
+        return reopen;
+    }
+
     private static SyncHuntingRequest.Page pageRead(String source, LogPageSnapshot snapshot, Set<Integer> obtained)
     {
         Map<String, Integer> quantities = new TreeMap<>();

@@ -559,19 +559,13 @@ class LuckTrackerPanel extends PluginPanel
         }
         importSummary.setText(summary.append("</html>").toString());
 
-        if (!plan.pagesToOpen.isEmpty())
+        Set<String> reopen = BackfillPlanner.pagesToReopen(catalog, plugin.getObtainedByPage(), plugin.getSnapshotByPage());
+        if (!plan.pagesToOpen.isEmpty() || !reopen.isEmpty())
         {
-            StringBuilder pages = new StringBuilder("<html><br>Pages still to open:");
-            int listed = 0;
-            for (String page : plan.pagesToOpen)
-            {
-                if (listed++ == MAX_LISTED_PAGES)
-                {
-                    pages.append("<br>&hellip;and ").append(plan.pagesToOpen.size() - MAX_LISTED_PAGES).append(" more");
-                    break;
-                }
-                pages.append("<br>&bull; ").append(page);
-            }
+            StringBuilder pages = new StringBuilder("<html>");
+            appendPageList(pages, "Pages still to open:", plan.pagesToOpen);
+            appendPageList(pages, "Pages to open again (they were read while loading, so what you're still "
+                + "hunting there isn't known yet):", reopen);
             importPages.setText(pages.append("</html>").toString());
         }
 
@@ -655,6 +649,25 @@ class LuckTrackerPanel extends PluginPanel
                 sendHunting(token, accountHash, hunting, next, imported);
             })
         );
+    }
+
+    private static void appendPageList(StringBuilder html, String heading, Set<String> pages)
+    {
+        if (pages.isEmpty())
+        {
+            return;
+        }
+        html.append("<br>").append(heading);
+        int listed = 0;
+        for (String page : pages)
+        {
+            if (listed++ == MAX_LISTED_PAGES)
+            {
+                html.append("<br>&hellip;and ").append(pages.size() - MAX_LISTED_PAGES).append(" more");
+                break;
+            }
+            html.append("<br>&bull; ").append(page);
+        }
     }
 
     private String displayName(BackfillPlanner.Candidate c)

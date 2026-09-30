@@ -246,6 +246,22 @@ class BackfillPlannerTest
     }
 
     @Test
+    void pagesReadMidFadeOrFromOldSavesAreListedToReopen()
+    {
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, Collections.emptyMap(), 2)); // header says 2, 1 read
+        snapshots.put("Kree'arra", new LogPageSnapshot(500, Collections.emptyMap()));             // older save
+        snapshots.put("Zulrah", new LogPageSnapshot(300, Collections.emptyMap(), 0));             // consistent
+        snapshots.put("All Pets", new LogPageSnapshot(5, Collections.emptyMap(), 9));             // not a source
+
+        Set<String> reopen = BackfillPlanner.pagesToReopen(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE), "Kree'arra", set(), "Zulrah", set(), "All Pets", set()),
+            snapshots);
+
+        assertEquals(keys("General Graardor", "Kree'arra"), new HashSet<>(reopen));
+    }
+
+    @Test
     void huntingSyncsOnlyChangesAndClearsObtainedItems()
     {
         Map<String, LogPageSnapshot> snapshots = new HashMap<>();

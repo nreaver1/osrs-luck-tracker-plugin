@@ -75,8 +75,10 @@ on anything fragile, and fails closed when something does change:
   `/sync-hunting` from the same button). Only flat-rate catalog items on
   the page's own source count, and only from a page whose slots read as
   obtained add up to the header's "Obtained: x/y", so a page drawn with
-  slots still faded can't list owned items as missing. Reopening a page
-  later sends the higher kill count and clears items obtained since.
+  slots still faded can't list owned items as missing. A page skipped
+  that way (or saved by an older version that didn't keep the header's
+  count) is listed in the panel under "Pages to open again". Reopening a
+  page later sends the higher kill count and clears items obtained since.
   The same button sends each consistent page whole (kill count,
   obtained items, quantities) when it differs from the backend's copy,
   which rates pages like Barrows as a whole.
