@@ -62,6 +62,21 @@ class LuckCheckMessageTest
         assertEquals("Soiled page: logged before tracking started, KC unknown.", Text.removeTags(backfilled));
     }
 
+    @Test
+    void showsABackfilledDropsSnapshotAsAnEstimate()
+    {
+        PlayerLuckResponse.Result r = result(null, "average", false, false, true);
+        r.snapshot = new PlayerLuckResponse.Snapshot();
+        r.snapshot.kc = 1100;
+        r.snapshot.quantity = 1;
+        r.snapshot.probability = 0.864;
+        r.snapshot.label = "dry";
+
+        String line = format(r, false, -1);
+        assertEquals("Soiled page: logged before tracking, 1 by 1,100 KC - dry (estimated).", Text.removeTags(line));
+        assertTrue(line.contains("<col=e01e1e>1 by 1,100 KC"), line);
+    }
+
     private static String format(PlayerLuckResponse.Result result, boolean includeSource, int iconIndex)
     {
         return LuckCheckMessage.format(result, "Soiled page", includeSource, iconIndex);

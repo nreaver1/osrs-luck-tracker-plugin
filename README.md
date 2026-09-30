@@ -59,6 +59,14 @@ on anything fragile, and fails closed when something does change:
   Pets", don't count, so boss pets import normally. Items several
   sources drop (godsword shards, Dragon pickaxe, Virtus) are listed as
   skipped and can be added one at a time from the dropdown.
+- **KC snapshot.** The same read also takes the page header's kill
+  count and each obtained slot's quantity (`LogPageSnapshot`, saved as
+  `logSnapshots`), and an import sends them with each item so the site
+  can estimate luck from "k copies by N KC". It's left out when the
+  header has no counter or several (Dagannoth Kings, The Gauntlet's two
+  modes), for stackable slots (their quantity counts items, not drops),
+  and for shared items (their quantity spans every source). Items
+  imported before snapshots existed are offered as "Add luck estimates".
 - **Failing closed.** If the cache layout isn't recognised, import is
   disabled with a message. If a drawn page doesn't match its cache
   entry, that page is skipped. Only (item, source) pairs from the
@@ -142,12 +150,17 @@ The backend URL and publishable key are hidden config items
   attribute those drops to, and silently skips them (logged at debug
   level, not submitted). Extending this to other source types would
   need a per-activity detection strategy, not just this one regex.
-- **Imported items never get a KC or a luck number.** There is no way to
+- **Imported items never get a drop KC.** There is no way to
   retroactively know what KC you were at for collection log items you
   already have when you install this plugin — that data simply doesn't
   exist anywhere to recover. Imported items are recorded as obtained
   with no KC, flagged `is_backfilled`, so the website never shows them
-  as a real percentage.
+  as a real percentage. Flat-rate items with a KC snapshot get a
+  separate, clearly marked estimate from their count instead.
+- **The KC snapshot's header read is unverified in-game.** Which header
+  children hold the kill counts follows the Collection Log plugin-hub
+  plugin's reading; if a page's header doesn't parse to exactly one
+  count, that page just imports without snapshots.
 - **The import needs you to click through the log pages.** The game only
   sends a page's contents when that page is opened, so there's nothing
   to read until you open it. The panel lists which pages are still

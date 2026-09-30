@@ -34,5 +34,19 @@ class PlayerLuckResponse
         boolean supported;
 
         boolean backfilled;
+
+        // Backfilled flat-rate items with a KC snapshot only (SnapshotLuck).
+        Snapshot snapshot;
+    }
+
+    static class Snapshot
+    {
+        int kc;
+
+        int quantity;
+
+        double probability;
+
+        String label;
     }
 }

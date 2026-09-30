@@ -60,12 +60,17 @@ class LuckTrackerPanel extends PluginPanel
     private List<CatalogChoice> allChoices;
     // account hash -> keys the database already has a row for (from /get-player-luck)
     private final Map<String, Set<String>> recordedByAccount = new HashMap<>();
+    // account hash -> recorded backfilled keys with no KC snapshot yet
+    private final Map<String, Set<String>> needsSnapshotByAccount = new HashMap<>();
     private String recordedFetchInFlight;
     private final Map<String, String> itemNames = new HashMap<>();
     // account hash -> Candidate keys already submitted this session
     private final Map<String, Set<String>> sentByAccount = new HashMap<>();
     private List<BackfillPlanner.Candidate> readyToImport = Collections.emptyList();
+    private List<BackfillPlanner.Candidate> snapshotUpdates = Collections.emptyList();
     private boolean importInFlight;
+    // Snapshot updates in the import in flight, which the backend counts as already recorded.
+    private int importSnapshotUpdates;
 
     LuckTrackerPanel(LuckTrackerPlugin plugin, ApiClient apiClient, ItemManager itemManager, ClientThread clientThread)
     {
@@ -339,11 +344,25 @@ class LuckTrackerPanel extends PluginPanel
                 if (results != null)
                 {
                     Set<String> keys = new HashSet<>();
+                    Set<String> tracked = new HashSet<>();
+                    Set<String> needsSnapshot = new HashSet<>();
                     for (PlayerLuckResponse.Result result : results)
                     {
-                        keys.add(new BackfillPlanner.Candidate(result.itemId, result.sourceName).key());
+                        String key = new BackfillPlanner.Candidate(result.itemId, result.sourceName).key();
+                        keys.add(key);
+                        if (!result.backfilled)
+                        {
+                            tracked.add(key);
+                        }
+                        else if (result.snapshot == null)
+                        {
+                            needsSnapshot.add(key);
+                        }
                     }
+                    // backfill-drop won't add a snapshot to a pair tracking has a drop for.
+                    needsSnapshot.removeAll(tracked);
                     recordedByAccount.put(accountHash, keys);
+                    needsSnapshotByAccount.put(accountHash, needsSnapshot);
                     refresh();
                 }
             })
@@ -428,6 +447,7 @@ class LuckTrackerPanel extends PluginPanel
     void refreshCollectionLogImport()
     {
         readyToImport = Collections.emptyList();
+        snapshotUpdates = Collections.emptyList();
         importPages.setText("");
         importButton.setText("Import items");
         importButton.setEnabled(false);
@@ -455,13 +475,22 @@ class LuckTrackerPanel extends PluginPanel
             catalog,
             plugin.getObtainedByPage(),
             index,
-            recordedKeys(accountHash)
+            recordedKeys(accountHash),
+            plugin.getSnapshotByPage(),
+            needsSnapshotByAccount.getOrDefault(accountHash, Collections.emptySet())
         );
         readyToImport = plan.ready;
+        snapshotUpdates = plan.snapshotUpdates;
 
         StringBuilder summary = new StringBuilder("<html>");
         summary.append(plan.ready.size()).append(plan.ready.size() == 1 ? " item" : " items")
             .append(" ready to import.");
+        if (!plan.snapshotUpdates.isEmpty())
+        {
+            summary.append("<br>").append(plan.snapshotUpdates.size())
+                .append(plan.snapshotUpdates.size() == 1 ? " imported item" : " imported items")
+                .append(" can get a luck estimate from the kill count on its log page.");
+        }
         if (plan.pagesRead > 0)
         {
             summary.append("<br><i>Read ").append(plan.pagesRead).append(plan.pagesRead == 1 ? " page" : " pages");
@@ -504,9 +533,14 @@ class LuckTrackerPanel extends PluginPanel
             importPages.setText(pages.append("</html>").toString());
         }
 
-        if (!plan.ready.isEmpty() && !importInFlight)
+        if (!importInFlight && !plan.ready.isEmpty())
         {
             importButton.setText("Import " + plan.ready.size() + (plan.ready.size() == 1 ? " item" : " items"));
+            importButton.setEnabled(true);
+        }
+        else if (!importInFlight && !plan.snapshotUpdates.isEmpty())
+        {
+            importButton.setText("Add luck estimates");
             importButton.setEnabled(true);
         }
     }
@@ -519,10 +553,12 @@ class LuckTrackerPanel extends PluginPanel
     private void onImportClicked()
     {
         List<BackfillPlanner.Candidate> toSend = new ArrayList<>(readyToImport);
+        toSend.addAll(snapshotUpdates);
         if (toSend.isEmpty())
         {
             return;
         }
+        int newItems = readyToImport.size();
 
         String accountHash = plugin.getCurrentAccountHash();
         String token = plugin.getInstallToken();
@@ -532,11 +568,15 @@ class LuckTrackerPanel extends PluginPanel
             return;
         }
 
+        String question = newItems > 0
+            ? "Mark " + newItems + " item(s) as already obtained?\n\n"
+                + "They'll show as \"logged before tracking\", with a luck estimate\n"
+                + "from the kill count on their log page where there is one.\n"
+            : "Add a luck estimate to " + toSend.size() + " imported item(s)?\n\n"
+                + "It's based on the kill count and quantity on their log page.\n";
         int choice = JOptionPane.showConfirmDialog(
             this,
-            "Mark " + toSend.size() + " item(s) as already obtained?\n\n"
-                + "They'll show as \"logged before tracking — luck unknown\".\n"
-                + "This can't be undone.",
+            question + "This can't be undone.",
             "Import from collection log",
             JOptionPane.OK_CANCEL_OPTION
         );
@@ -547,8 +587,9 @@ class LuckTrackerPanel extends PluginPanel
 
         importInFlight = true;
         importButton.setEnabled(false);
+        importSnapshotUpdates = toSend.size() - newItems;
         statusLabel.setText("Importing " + toSend.size() + " item(s)...");
-        sendImportBatch(token, accountHash, toSend, 0, 0, 0);
+        sendImportBatch(token, accountHash, toSend, 0, 0, 0, 0);
     }
 
     /**
@@ -556,13 +597,15 @@ class LuckTrackerPanel extends PluginPanel
      * go out one at a time and a failure stops the rest. Runs on the EDT.
      */
     private void sendImportBatch(String token, String accountHash, List<BackfillPlanner.Candidate> all,
-        int offset, int inserted, int alreadyRecorded)
+        int offset, int inserted, int alreadyRecorded, int snapshotsAdded)
     {
         if (offset >= all.size())
         {
             importInFlight = false;
+            int recordedBefore = Math.max(0, alreadyRecorded - importSnapshotUpdates);
             statusLabel.setText("<html>Imported " + inserted + " item(s)"
-                + (alreadyRecorded > 0 ? ", " + alreadyRecorded + " were already recorded" : "") + ".</html>");
+                + (snapshotsAdded > 0 ? ", added " + snapshotsAdded + " luck estimate(s)" : "")
+                + (recordedBefore > 0 ? ", " + recordedBefore + " were already recorded" : "") + ".</html>");
             refresh();
             return;
         }
@@ -571,7 +614,7 @@ class LuckTrackerPanel extends PluginPanel
         List<BackfillBatchRequest.Drop> drops = new ArrayList<>();
         for (BackfillPlanner.Candidate c : chunk)
         {
-            drops.add(new BackfillBatchRequest.Drop(c.itemId, c.sourceName));
+            drops.add(new BackfillBatchRequest.Drop(c.itemId, c.sourceName, c.snapshotKc, c.snapshotQuantity));
         }
 
         apiClient.backfillDrops(token, accountHash, drops, result ->
@@ -587,13 +630,17 @@ class LuckTrackerPanel extends PluginPanel
                 }
 
                 Set<String> sent = sentByAccount.computeIfAbsent(accountHash, k -> new HashSet<>());
+                Set<String> needsSnapshot = needsSnapshotByAccount.getOrDefault(accountHash, Collections.emptySet());
                 for (BackfillPlanner.Candidate c : chunk)
                 {
                     sent.add(c.key());
+                    // Offered once: the backend only ever fills a missing snapshot.
+                    needsSnapshot.remove(c.key());
                 }
                 plugin.invalidateLuckResults();
                 sendImportBatch(token, accountHash, all, offset + chunk.size(),
-                    inserted + result.inserted, alreadyRecorded + result.alreadyRecorded);
+                    inserted + result.inserted, alreadyRecorded + result.alreadyRecorded,
+                    snapshotsAdded + result.snapshotsAdded);
             })
         );
     }

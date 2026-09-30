@@ -12,6 +12,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BackfillPlannerTest
@@ -37,7 +38,7 @@ class BackfillPlannerTest
         entry(GODSWORD_SHARD_1, "General Graardor"),
         entry(ARMADYL_HELMET, "Kree'arra"),
         entry(GODSWORD_SHARD_1, "Kree'arra"),
-        entry(TANZANITE_FANG, "Zulrah")
+        entry(TANZANITE_FANG, "Zulrah", "points_based") // not really, but a non-flat rate to test with
     );
 
     @Test
@@ -149,6 +150,69 @@ class BackfillPlannerTest
     }
 
     @Test
+    void readyItemCarriesItsPagesSnapshot()
+    {
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, quantities(BANDOS_CHESTPLATE, 2)));
+
+        BackfillPlanner.Plan plan = BackfillPlanner.plan(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE)), index, Collections.emptySet(),
+            snapshots, Collections.emptySet());
+
+        BackfillPlanner.Candidate c = plan.ready.get(0);
+        assertEquals(Integer.valueOf(1100), c.snapshotKc);
+        assertEquals(Integer.valueOf(2), c.snapshotQuantity);
+    }
+
+    @Test
+    void noSnapshotWithoutAQuantityOrForASharedItem()
+    {
+        // Page KC known, but the slot had no quantity captured (stackable),
+        // and the shard is on every GWD page, so its quantity isn't Graardor's.
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, quantities(GODSWORD_SHARD_1, 1)));
+
+        BackfillPlanner.Plan plan = BackfillPlanner.plan(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE, GODSWORD_SHARD_1),
+                "Kree'arra", set(GODSWORD_SHARD_1)),
+            index, Collections.emptySet(), snapshots, Collections.emptySet());
+
+        assertFalse(plan.ready.get(0).hasSnapshot());
+        assertNull(plan.ready.get(0).snapshotQuantity);
+        plan.shared.forEach(c -> assertFalse(c.hasSnapshot()));
+    }
+
+    @Test
+    void importedFlatRateItemWithoutSnapshotBecomesAnUpdate()
+    {
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, quantities(BANDOS_CHESTPLATE, 1)));
+        snapshots.put("Zulrah", new LogPageSnapshot(300, quantities(TANZANITE_FANG, 1)));
+        Set<String> recorded = keys(BANDOS_CHESTPLATE + "|General Graardor", TANZANITE_FANG + "|Zulrah");
+
+        BackfillPlanner.Plan plan = BackfillPlanner.plan(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE), "Zulrah", set(TANZANITE_FANG)),
+            index, recorded, snapshots, recorded);
+
+        assertTrue(plan.ready.isEmpty());
+        // The fang's rate isn't flat, so the backend couldn't rate its snapshot.
+        assertEquals(keys(BANDOS_CHESTPLATE + "|General Graardor"), keysOf(plan.snapshotUpdates));
+    }
+
+    @Test
+    void importedItemThatAlreadyHasASnapshotIsLeftAlone()
+    {
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, quantities(BANDOS_CHESTPLATE, 1)));
+        Set<String> recorded = keys(BANDOS_CHESTPLATE + "|General Graardor");
+
+        BackfillPlanner.Plan plan = BackfillPlanner.plan(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE)), index, recorded, snapshots, Collections.emptySet());
+
+        assertTrue(plan.snapshotUpdates.isEmpty());
+    }
+
+    @Test
     void dropdownFilterKeepsOnlySlotsOnTheSourcesOwnPage()
     {
         assertTrue(BackfillPlanner.isLogItemForSource(BANDOS_CHESTPLATE, "General Graardor", index));
@@ -174,10 +238,23 @@ class BackfillPlannerTest
 
     private static CatalogEntry entry(int itemId, String source)
     {
+        return entry(itemId, source, "flat_geometric");
+    }
+
+    private static CatalogEntry entry(int itemId, String source, String distributionType)
+    {
         CatalogEntry e = new CatalogEntry();
         e.itemId = itemId;
         e.sourceName = source;
+        e.distributionType = distributionType;
         return e;
+    }
+
+    private static Map<Integer, Integer> quantities(int itemId, int quantity)
+    {
+        Map<Integer, Integer> map = new HashMap<>();
+        map.put(itemId, quantity);
+        return map;
     }
 
     @SuppressWarnings("unchecked")

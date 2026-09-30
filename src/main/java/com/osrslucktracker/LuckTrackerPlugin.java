@@ -145,6 +145,17 @@ public class LuckTrackerPlugin extends Plugin
     // doesn't ask for pages the player already opened.
     private static final String READ_LOG_PAGES_KEY = "readLogPages";
     private static final Type READ_LOG_PAGES_TYPE = new TypeToken<Map<String, Set<Integer>>>() {}.getType();
+    // Per-account config key holding each read page's kill count and item
+    // quantities (see LogPageSnapshot), sent with an import as its KC snapshot.
+    private static final String LOG_SNAPSHOTS_KEY = "logSnapshots";
+    private static final Type LOG_SNAPSHOTS_TYPE = new TypeToken<Map<String, StoredSnapshot>>() {}.getType();
+
+    /** LogPageSnapshot as saved in config. */
+    private static final class StoredSnapshot
+    {
+        int kc;
+        Map<Integer, Integer> quantities;
+    }
 
     // Lifetime KC as the game prints it, which the API needs for kc_received.
     private final Map<String, Integer> bossKillCounts = new HashMap<>();
@@ -175,6 +186,7 @@ public class LuckTrackerPlugin extends Plugin
     // --- Collection log import state (see readCollectionLogPage) ---
     // Written on the client thread, read by the panel on the EDT.
     private final Map<String, Set<Integer>> obtainedByPage = new ConcurrentHashMap<>();
+    private final Map<String, LogPageSnapshot> snapshotByPage = new ConcurrentHashMap<>();
     private final Set<String> mismatchWarnedPages = new HashSet<>();
     private volatile CollectionLogIndex collectionLogIndex;
     private volatile boolean collectionLogIndexFailed;
@@ -243,6 +255,7 @@ public class LuckTrackerPlugin extends Plugin
         luckResultsAccount = null;
         lastKillSource = null;
         obtainedByPage.clear();
+        snapshotByPage.clear();
         scannedAccountHash = null;
         adventureLogOwner = null;
         registeredAccountHash = null;
@@ -428,6 +441,25 @@ public class LuckTrackerPlugin extends Plugin
         }
     }
 
+    /** The open page's header lines after the title (the obtained count, then any kill counts). */
+    private List<String> openLogPageHeaderLines()
+    {
+        Widget header = client.getWidget(InterfaceID.Collection.HEADER_TEXT);
+        Widget[] children = header == null ? null : header.getDynamicChildren();
+        List<String> lines = new ArrayList<>();
+        if (children != null)
+        {
+            for (int i = COLLECTION_LOG_HEADER_TITLE_INDEX + 1; i < children.length; i++)
+            {
+                if (children[i] != null)
+                {
+                    lines.add(children[i].getText());
+                }
+            }
+        }
+        return lines;
+    }
+
     /** The open collection log page's title, or null if the log isn't open. */
     private String openLogPageTitle()
     {
@@ -480,6 +512,7 @@ public class LuckTrackerPlugin extends Plugin
         Set<Integer> expected = index.itemsOn(title);
         Set<Integer> shown = new HashSet<>();
         Set<Integer> obtained = new HashSet<>();
+        Map<Integer, Integer> quantities = new HashMap<>();
         for (Widget child : items.getChildren())
         {
             if (child == null || child.getItemId() <= 0)
@@ -499,6 +532,12 @@ public class LuckTrackerPlugin extends Plugin
             if (child.getOpacity() == 0)
             {
                 obtained.add(itemId);
+                // A stackable slot counts items, not drops (Barrows bolt
+                // racks come dozens at a time), so it gets no snapshot.
+                if (child.getItemQuantity() > 0 && !itemManager.getItemComposition(itemId).isStackable())
+                {
+                    quantities.put(itemId, child.getItemQuantity());
+                }
             }
         }
 
@@ -534,11 +573,31 @@ public class LuckTrackerPlugin extends Plugin
         {
             merged.addAll(previous);
         }
+        boolean changed = false;
         if (!merged.equals(previous))
         {
             obtainedByPage.put(title, Collections.unmodifiableSet(merged));
             log.debug("Read collection log page '{}': {} obtained", title, merged.size());
             saveReadPages(accountHash);
+            changed = true;
+        }
+
+        Integer kc = LogPageSnapshot.parseKillCount(openLogPageHeaderLines());
+        if (kc != null)
+        {
+            LogPageSnapshot prior = snapshotByPage.get(title);
+            LogPageSnapshot snapshot = new LogPageSnapshot(kc, quantities).merge(prior);
+            if (!snapshot.equals(prior))
+            {
+                snapshotByPage.put(title, snapshot);
+                log.debug("Collection log page '{}' snapshot: {} KC, quantities {}", title, snapshot.kc, snapshot.quantities);
+                saveSnapshots(accountHash);
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
             notifyPanel();
         }
     }
@@ -575,6 +634,7 @@ public class LuckTrackerPlugin extends Plugin
     /** Restores the pages this account read in earlier sessions. */
     private void loadReadPages(String accountHash)
     {
+        loadSnapshots(accountHash);
         obtainedByPage.clear();
         scannedAccountHash = accountHash;
         String json = configManager.getConfiguration("lucktracker", accountHash, READ_LOG_PAGES_KEY);
@@ -601,6 +661,42 @@ public class LuckTrackerPlugin extends Plugin
         Map<String, Set<Integer>> sorted = new TreeMap<>();
         obtainedByPage.forEach((page, ids) -> sorted.put(page, new TreeSet<>(ids)));
         configManager.setConfiguration("lucktracker", accountHash, READ_LOG_PAGES_KEY, gson.toJson(sorted));
+    }
+
+    private void loadSnapshots(String accountHash)
+    {
+        snapshotByPage.clear();
+        String json = configManager.getConfiguration("lucktracker", accountHash, LOG_SNAPSHOTS_KEY);
+        if (json == null || json.isEmpty())
+        {
+            return;
+        }
+        try
+        {
+            Map<String, StoredSnapshot> saved = gson.fromJson(json, LOG_SNAPSHOTS_TYPE);
+            if (saved != null)
+            {
+                saved.forEach((page, s) -> snapshotByPage.put(page,
+                    new LogPageSnapshot(s.kc, s.quantities == null ? Collections.emptyMap() : s.quantities)));
+            }
+        }
+        catch (JsonSyntaxException e)
+        {
+            log.warn("Ignoring unreadable saved collection log snapshots", e);
+        }
+    }
+
+    private void saveSnapshots(String accountHash)
+    {
+        Map<String, StoredSnapshot> sorted = new TreeMap<>();
+        snapshotByPage.forEach((page, snapshot) ->
+        {
+            StoredSnapshot stored = new StoredSnapshot();
+            stored.kc = snapshot.kc;
+            stored.quantities = snapshot.quantities;
+            sorted.put(page, stored);
+        });
+        configManager.setConfiguration("lucktracker", accountHash, LOG_SNAPSHOTS_KEY, gson.toJson(sorted));
     }
 
     /** Built once per session on the client thread; null if the cache layout is unrecognised. */
@@ -682,6 +778,7 @@ public class LuckTrackerPlugin extends Plugin
     private void clearCollectionLogScan()
     {
         obtainedByPage.clear();
+        snapshotByPage.clear();
         mismatchWarnedPages.clear();
         scannedAccountHash = null;
         adventureLogOwner = null;
@@ -1076,6 +1173,12 @@ public class LuckTrackerPlugin extends Plugin
     Map<String, Set<Integer>> getObtainedByPage()
     {
         return new HashMap<>(obtainedByPage);
+    }
+
+    /** Each read page's kill count and item quantities: page title -> snapshot. */
+    Map<String, LogPageSnapshot> getSnapshotByPage()
+    {
+        return new HashMap<>(snapshotByPage);
     }
 
     /** Null until the first collection log page is opened, or if the cache layout is unrecognised. */

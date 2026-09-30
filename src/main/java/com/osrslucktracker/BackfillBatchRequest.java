@@ -29,10 +29,20 @@ class BackfillBatchRequest
         @SerializedName("source_name")
         final String sourceName;
 
-        Drop(int itemId, String sourceName)
+        // The log page's KC and the item's quantity at read time; both or
+        // neither, and left out of the JSON when null.
+        @SerializedName("snapshot_kc")
+        final Integer snapshotKc;
+
+        @SerializedName("snapshot_quantity")
+        final Integer snapshotQuantity;
+
+        Drop(int itemId, String sourceName, Integer snapshotKc, Integer snapshotQuantity)
         {
             this.itemId = itemId;
             this.sourceName = sourceName;
+            this.snapshotKc = snapshotKc;
+            this.snapshotQuantity = snapshotQuantity;
         }
     }
 }
@@ -43,4 +53,7 @@ class BackfillBatchResponse
 
     @SerializedName("already_recorded")
     int alreadyRecorded;
+
+    @SerializedName("snapshots_added")
+    int snapshotsAdded;
 }

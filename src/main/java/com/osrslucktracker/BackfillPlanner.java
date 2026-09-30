@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -28,9 +29,16 @@ import java.util.TreeSet;
  *    "All Pets", don't count: a pet is still attributable to its boss.
  * Obtained catalog items that fail only the last check are reported as
  * shared, so the panel can point the player at the manual dropdown.
+ *
+ * A ready item also carries its page's KC snapshot when the page header
+ * showed exactly one kill count and the slot a quantity (see
+ * {@link LogPageSnapshot}). Flat-rate items imported before snapshots
+ * existed are listed as snapshot updates, which the backend fills in once.
  */
 final class BackfillPlanner
 {
+    private static final String FLAT_RATE = "flat_geometric";
+
     private BackfillPlanner()
     {
     }
@@ -39,11 +47,27 @@ final class BackfillPlanner
     {
         final int itemId;
         final String sourceName;
+        // Both or neither; not part of equality, which is the (item, source) pair.
+        final Integer snapshotKc;
+        final Integer snapshotQuantity;
 
         Candidate(int itemId, String sourceName)
         {
+            this(itemId, sourceName, null, null);
+        }
+
+        Candidate(int itemId, String sourceName, Integer snapshotKc, Integer snapshotQuantity)
+        {
             this.itemId = itemId;
             this.sourceName = sourceName;
+            boolean both = snapshotKc != null && snapshotQuantity != null;
+            this.snapshotKc = both ? snapshotKc : null;
+            this.snapshotQuantity = both ? snapshotQuantity : null;
+        }
+
+        boolean hasSnapshot()
+        {
+            return snapshotKc != null;
         }
 
         String key()
@@ -77,6 +101,8 @@ final class BackfillPlanner
     {
         /** Safe to import: single-page items from a catalog source. */
         final List<Candidate> ready = new ArrayList<>();
+        /** Already-imported items without a snapshot that a read page has one for. */
+        final List<Candidate> snapshotUpdates = new ArrayList<>();
         /** Obtained catalog items that several rated sources' pages list — source unknown. */
         final List<Candidate> shared = new ArrayList<>();
         /** Catalog sources with a log page the player hasn't opened yet. */
@@ -99,11 +125,33 @@ final class BackfillPlanner
         CollectionLogIndex index,
         Set<String> alreadySent)
     {
+        return plan(catalog, obtainedByPage, index, alreadySent, Collections.emptyMap(), Collections.emptySet());
+    }
+
+    /**
+     * @param snapshots      page title -> that page's KC snapshot
+     * @param needsSnapshot  {@link Candidate#key()}s recorded as backfilled with no snapshot yet
+     */
+    static Plan plan(
+        Collection<CatalogEntry> catalog,
+        Map<String, Set<Integer>> obtainedByPage,
+        CollectionLogIndex index,
+        Set<String> alreadySent,
+        Map<String, LogPageSnapshot> snapshots,
+        Set<String> needsSnapshot)
+    {
         // source name as the log page would show it -> catalog item ids
         Map<String, Set<Integer>> catalogBySource = new HashMap<>();
         Map<String, String> sourceByNormalizedName = new HashMap<>();
+        // The backend only rates snapshots of flat rates, so only those are
+        // worth a snapshot update; a new import still sends one for any type.
+        Set<String> flatRated = new HashSet<>();
         for (CatalogEntry entry : catalog)
         {
+            if (FLAT_RATE.equals(entry.distributionType))
+            {
+                flatRated.add(new Candidate(entry.itemId, entry.sourceName).key());
+            }
             catalogBySource.computeIfAbsent(entry.sourceName, k -> new TreeSet<>()).add(entry.itemId);
             sourceByNormalizedName.putIfAbsent(normalize(entry.sourceName), entry.sourceName);
         }
@@ -127,6 +175,7 @@ final class BackfillPlanner
         {
             String source = sourceByNormalizedName.get(normalize(page));
             Set<Integer> tracked = source == null ? Collections.emptySet() : catalogBySource.get(source);
+            LogPageSnapshot snapshot = snapshots.get(page);
 
             for (int itemId : new TreeSet<>(obtainedByPage.get(page)))
             {
@@ -135,12 +184,21 @@ final class BackfillPlanner
                     plan.obtainedWithoutRate.add(itemId);
                     continue;
                 }
-                Candidate candidate = new Candidate(itemId, source);
+                boolean singlePage = ratedPagesFor(itemId, index, sourceByNormalizedName, catalogBySource) == 1;
+                // A shared item's quantity counts copies from every source, so only single-page items get one.
+                Candidate candidate = snapshot != null && singlePage
+                    ? new Candidate(itemId, source, snapshot.kc, snapshot.quantityOf(itemId))
+                    : new Candidate(itemId, source);
                 if (alreadySent.contains(candidate.key()))
                 {
+                    if (candidate.hasSnapshot() && needsSnapshot.contains(candidate.key())
+                        && flatRated.contains(candidate.key()))
+                    {
+                        plan.snapshotUpdates.add(candidate);
+                    }
                     continue;
                 }
-                if (ratedPagesFor(itemId, index, sourceByNormalizedName, catalogBySource) == 1)
+                if (singlePage)
                 {
                     plan.ready.add(candidate);
                 }

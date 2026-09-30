@@ -4,6 +4,7 @@ import net.runelite.client.chat.ChatMessageBuilder;
 import net.runelite.client.util.Text;
 
 import java.awt.Color;
+import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -43,7 +44,8 @@ final class LuckCheckMessage
     /**
      * The chat line for one recorded drop, or null if there's nothing to
      * say. Backfilled drops have no KC, and drops without a supported
-     * distribution have no luck label; neither is ever given one.
+     * distribution have no luck label; neither is ever given one. A
+     * backfilled drop with a KC snapshot shows that instead, as an estimate.
      */
     static String format(PlayerLuckResponse.Result result, String itemName, boolean includeSource, int iconIndex)
     {
@@ -55,6 +57,16 @@ final class LuckCheckMessage
         message.append(itemName + ": ");
         String from = includeSource ? " from " + result.sourceName : "";
 
+        if (result.backfilled && result.snapshot != null && labelText(result.snapshot.label) != null)
+        {
+            // Rates the count on the log page at import, not a drop.
+            PlayerLuckResponse.Snapshot snap = result.snapshot;
+            Color color = labelColor(snap.label);
+            return message.append("logged before tracking" + from + ", ")
+                .append(color, String.format(Locale.ROOT, "%,d by %,d KC", snap.quantity, snap.kc))
+                .append(" - ").append(color, labelText(snap.label))
+                .append(" (estimated).").build();
+        }
         if (result.backfilled)
         {
             return message.append("logged before tracking started" + from + ", KC unknown.").build();

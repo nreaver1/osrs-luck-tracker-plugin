@@ -11,6 +11,10 @@ class CatalogEntry
 
     @SerializedName("source_name")
     String sourceName;
+
+    // "flat_geometric", "points_based", ...; null from a backend older than KC snapshots.
+    @SerializedName("distribution_type")
+    String distributionType;
 }
 
 class CatalogResponse
