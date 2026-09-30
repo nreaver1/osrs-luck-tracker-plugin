@@ -2,6 +2,7 @@ package com.osrslucktracker;
 
 import com.google.gson.annotations.SerializedName;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -12,6 +13,28 @@ import java.util.List;
 class PlayerLuckResponse
 {
     List<Result> results;
+
+    // Items still being hunted (migration 0008); null from an older backend.
+    List<Hunting> hunting;
+
+    static PlayerLuckResponse empty()
+    {
+        PlayerLuckResponse r = new PlayerLuckResponse();
+        r.results = new ArrayList<>();
+        r.hunting = new ArrayList<>();
+        return r;
+    }
+
+    static class Hunting
+    {
+        @SerializedName("item_id")
+        int itemId;
+
+        @SerializedName("source_name")
+        String sourceName;
+
+        int kc;
+    }
 
     static class Result
     {

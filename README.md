@@ -70,6 +70,13 @@ on anything fragile, and fails closed when something does change:
   points-dependent number of rolls), for stackable slots (their quantity counts items, not drops),
   and for shared items (their quantity spans every source). Items
   imported before snapshots existed are offered as "Add luck estimates".
+- **Still hunting.** The empty slots on those same pages become the
+  site's "still hunting" list (`BackfillPlanner.planHunting`, sent to
+  `/sync-hunting` from the same button). Only flat-rate catalog items on
+  the page's own source count, and only from a page whose slots read as
+  obtained add up to the header's "Obtained: x/y", so a page drawn with
+  slots still faded can't list owned items as missing. Reopening a page
+  later sends the higher kill count and clears items obtained since.
 - **Failing closed.** If the cache layout isn't recognised, import is
   disabled with a message. If a drawn page doesn't match its cache
   entry, that page is skipped. Only (item, source) pairs from the

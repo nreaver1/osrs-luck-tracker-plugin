@@ -231,10 +231,11 @@ class ApiClient
      * token this is the token-checked POST form of /get-player-luck, which
      * works even when the player has hidden their profile; without one it
      * falls back to the public lookup by name. A player with no rows yet
-     * (404) gets an empty list; any other failure calls back with null.
+     * (404) gets an empty response; any other failure calls back with null.
+     * The response's lists are never null.
      */
     void fetchPlayerLuck(String accountHash, String installToken, String ign,
-        Consumer<List<PlayerLuckResponse.Result>> onResult)
+        Consumer<PlayerLuckResponse> onResult)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -276,7 +277,7 @@ class ApiClient
                 {
                     if (r.code() == 404)
                     {
-                        onResult.accept(new ArrayList<>());
+                        onResult.accept(PlayerLuckResponse.empty());
                         return;
                     }
                     if (!r.isSuccessful() || r.body() == null)
@@ -286,7 +287,19 @@ class ApiClient
                         return;
                     }
                     PlayerLuckResponse parsed = gson.fromJson(r.body().string(), PlayerLuckResponse.class);
-                    onResult.accept(parsed == null || parsed.results == null ? new ArrayList<>() : parsed.results);
+                    if (parsed == null)
+                    {
+                        parsed = PlayerLuckResponse.empty();
+                    }
+                    if (parsed.results == null)
+                    {
+                        parsed.results = new ArrayList<>();
+                    }
+                    if (parsed.hunting == null)
+                    {
+                        parsed.hunting = new ArrayList<>();
+                    }
+                    onResult.accept(parsed);
                 }
                 catch (Exception e)
                 {
@@ -388,6 +401,54 @@ class ApiClient
                 catch (Exception e)
                 {
                     log.warn("Failed to parse backfill-drop batch response", e);
+                    onResult.accept(null);
+                }
+            }
+        });
+    }
+
+    void syncHunting(String installToken, String accountHash, List<SyncHuntingRequest.Item> hunting,
+        List<SyncHuntingRequest.Pair> obtained, Consumer<SyncHuntingResponse> onResult)
+    {
+        if (config.apiBaseUrl().isEmpty())
+        {
+            log.debug("API base URL not configured, skipping sync-hunting");
+            onResult.accept(null);
+            return;
+        }
+
+        SyncHuntingRequest body = new SyncHuntingRequest(installToken, accountHash, hunting, obtained);
+        Request request = new Request.Builder()
+            .url(config.apiBaseUrl() + "/sync-hunting")
+            .header("apikey", config.publishableKey())
+            .post(RequestBody.create(JSON, gson.toJson(body)))
+            .build();
+
+        httpClient.newCall(request).enqueue(new Callback()
+        {
+            @Override
+            public void onFailure(Call call, IOException e)
+            {
+                log.warn("Sync-hunting call failed ({} items)", hunting.size() + obtained.size(), e);
+                onResult.accept(null);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response)
+            {
+                try (Response r = response)
+                {
+                    if (!r.isSuccessful() || r.body() == null)
+                    {
+                        log.warn("Sync-hunting returned HTTP {} ({} items)", r.code(), hunting.size() + obtained.size());
+                        onResult.accept(null);
+                        return;
+                    }
+                    onResult.accept(gson.fromJson(r.body().string(), SyncHuntingResponse.class));
+                }
+                catch (Exception e)
+                {
+                    log.warn("Failed to parse sync-hunting response", e);
                     onResult.accept(null);
                 }
             }

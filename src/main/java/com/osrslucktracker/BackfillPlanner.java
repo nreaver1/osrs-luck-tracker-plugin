@@ -225,6 +225,103 @@ final class BackfillPlanner
             .count();
     }
 
+    static final class HuntingItem
+    {
+        final int itemId;
+        final String sourceName;
+        final int kc;
+
+        HuntingItem(int itemId, String sourceName, int kc)
+        {
+            this.itemId = itemId;
+            this.sourceName = sourceName;
+            this.kc = kc;
+        }
+
+        String key()
+        {
+            return itemId + "|" + sourceName;
+        }
+    }
+
+    static final class HuntingPlan
+    {
+        /** Empty slots the backend doesn't have yet, or has at a lower kill count. */
+        final List<HuntingItem> toSync = new ArrayList<>();
+        /** Pairs the backend is hunting whose slot now reads obtained. */
+        final List<Candidate> obtained = new ArrayList<>();
+
+        boolean isEmpty()
+        {
+            return toSync.isEmpty() && obtained.isEmpty();
+        }
+    }
+
+    /**
+     * "Still hunting" rows from the pages read: every flat-rate catalog item
+     * a page lists for its own source whose slot is empty, at that page's
+     * kill count. An empty slot means none from any source, so shared items
+     * count too. A page is only used when its snapshot has a kill count and
+     * the slots read as obtained add up to the header's "Obtained: x/y", so
+     * a page drawn mid-fade can't list owned items as missing.
+     *
+     * @param serverHunting {@link Candidate#key()} -> kill count the backend holds
+     */
+    static HuntingPlan planHunting(
+        Collection<CatalogEntry> catalog,
+        Map<String, Set<Integer>> obtainedByPage,
+        CollectionLogIndex index,
+        Map<String, LogPageSnapshot> snapshots,
+        Map<String, Integer> serverHunting)
+    {
+        Map<String, Set<Integer>> flatBySource = new HashMap<>();
+        Map<String, String> sourceByNormalizedName = new HashMap<>();
+        for (CatalogEntry entry : catalog)
+        {
+            if (FLAT_RATE.equals(entry.distributionType))
+            {
+                flatBySource.computeIfAbsent(entry.sourceName, k -> new TreeSet<>()).add(entry.itemId);
+                sourceByNormalizedName.putIfAbsent(normalize(entry.sourceName), entry.sourceName);
+            }
+        }
+
+        HuntingPlan plan = new HuntingPlan();
+        List<String> pages = new ArrayList<>(obtainedByPage.keySet());
+        pages.sort(Comparator.naturalOrder());
+        for (String page : pages)
+        {
+            String source = sourceByNormalizedName.get(normalize(page));
+            LogPageSnapshot snapshot = snapshots.get(page);
+            Set<Integer> obtained = obtainedByPage.get(page);
+            if (source == null || snapshot == null || snapshot.kc <= 0
+                || snapshot.obtainedShown == null || snapshot.obtainedShown != obtained.size())
+            {
+                continue;
+            }
+            for (int itemId : flatBySource.get(source))
+            {
+                if (!index.itemsOn(page).contains(itemId))
+                {
+                    continue;
+                }
+                String key = new Candidate(itemId, source).key();
+                Integer held = serverHunting.get(key);
+                if (obtained.contains(itemId))
+                {
+                    if (held != null)
+                    {
+                        plan.obtained.add(new Candidate(itemId, source));
+                    }
+                }
+                else if (held == null || snapshot.kc > held)
+                {
+                    plan.toSync.add(new HuntingItem(itemId, source, snapshot.kc));
+                }
+            }
+        }
+        return plan;
+    }
+
     /** True if the item is a collection log slot on the page for this catalog source. */
     static boolean isLogItemForSource(int itemId, String source, CollectionLogIndex index)
     {

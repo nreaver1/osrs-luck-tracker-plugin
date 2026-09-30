@@ -156,6 +156,7 @@ public class LuckTrackerPlugin extends Plugin
     {
         int kc;
         Map<Integer, Integer> quantities;
+        Integer obtainedShown; // null in saves from before still-hunting rows
     }
 
     // Lifetime KC as the game prints it, which the API needs for kc_received.
@@ -593,7 +594,8 @@ public class LuckTrackerPlugin extends Plugin
         if (kc != null)
         {
             LogPageSnapshot prior = snapshotByPage.get(title);
-            LogPageSnapshot snapshot = new LogPageSnapshot(kc, quantities).merge(prior);
+            LogPageSnapshot snapshot = new LogPageSnapshot(kc, quantities,
+                LogPageSnapshot.parseObtainedCount(headerLines)).merge(prior);
             if (!snapshot.equals(prior))
             {
                 snapshotByPage.put(title, snapshot);
@@ -684,7 +686,7 @@ public class LuckTrackerPlugin extends Plugin
             if (saved != null)
             {
                 saved.forEach((page, s) -> snapshotByPage.put(page,
-                    new LogPageSnapshot(s.kc, s.quantities == null ? Collections.emptyMap() : s.quantities)));
+                    new LogPageSnapshot(s.kc, s.quantities == null ? Collections.emptyMap() : s.quantities, s.obtainedShown)));
             }
         }
         catch (JsonSyntaxException e)
@@ -701,6 +703,7 @@ public class LuckTrackerPlugin extends Plugin
             StoredSnapshot stored = new StoredSnapshot();
             stored.kc = snapshot.kc;
             stored.quantities = snapshot.quantities;
+            stored.obtainedShown = snapshot.obtainedShown;
             sorted.put(page, stored);
         });
         configManager.setConfiguration("lucktracker", accountHash, LOG_SNAPSHOTS_KEY, gson.toJson(sorted));
@@ -974,15 +977,15 @@ public class LuckTrackerPlugin extends Plugin
         }
 
         luckFetchInFlight = true;
-        apiClient.fetchPlayerLuck(accountHash, getInstallToken(), localPlayerName, results -> clientThread.invoke(() ->
+        apiClient.fetchPlayerLuck(accountHash, getInstallToken(), localPlayerName, response -> clientThread.invoke(() ->
         {
             luckFetchInFlight = false;
-            if (results == null || !accountHash.equals(getCurrentAccountHash()))
+            if (response == null || !accountHash.equals(getCurrentAccountHash()))
             {
                 return;
             }
             luckResultsAccount = accountHash;
-            luckResults = results;
+            luckResults = response.results;
             printLuckCheck(itemName, itemIds, title);
         }));
     }

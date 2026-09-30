@@ -75,6 +75,15 @@ class LogPageSnapshotTest
     }
 
     @Test
+    void readsTheHeadersObtainedCount()
+    {
+        assertEquals(Integer.valueOf(3), LogPageSnapshot.parseObtainedCount(Arrays.asList(
+            "Obtained: <col=ffff00>3/12</col>",
+            "Tempoross kills: <col=ffffff>33</col>")));
+        assertNull(LogPageSnapshot.parseObtainedCount(Collections.singletonList("Brutus kills: <col=ffffff>568</col>")));
+    }
+
+    @Test
     void noCounterMeansNoSnapshot()
     {
         assertNull(LogPageSnapshot.parseKillCount("Test page", Collections.emptyList()));

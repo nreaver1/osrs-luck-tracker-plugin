@@ -62,15 +62,20 @@ class LuckTrackerPanel extends PluginPanel
     private final Map<String, Set<String>> recordedByAccount = new HashMap<>();
     // account hash -> recorded backfilled keys with no KC snapshot yet
     private final Map<String, Set<String>> needsSnapshotByAccount = new HashMap<>();
+    // account hash -> still-hunting key -> kill count the backend holds
+    private final Map<String, Map<String, Integer>> huntingByAccount = new HashMap<>();
     private String recordedFetchInFlight;
     private final Map<String, String> itemNames = new HashMap<>();
     // account hash -> Candidate keys already submitted this session
     private final Map<String, Set<String>> sentByAccount = new HashMap<>();
     private List<BackfillPlanner.Candidate> readyToImport = Collections.emptyList();
     private List<BackfillPlanner.Candidate> snapshotUpdates = Collections.emptyList();
+    private BackfillPlanner.HuntingPlan huntingPlan = new BackfillPlanner.HuntingPlan();
     private boolean importInFlight;
     // Snapshot updates in the import in flight, which the backend counts as already recorded.
     private int importSnapshotUpdates;
+    // Still-hunting changes sent once the import's batches are done.
+    private BackfillPlanner.HuntingPlan importHunting = new BackfillPlanner.HuntingPlan();
 
     LuckTrackerPanel(LuckTrackerPlugin plugin, ApiClient apiClient, ItemManager itemManager, ClientThread clientThread)
     {
@@ -337,12 +342,19 @@ class LuckTrackerPanel extends PluginPanel
         }
 
         recordedFetchInFlight = accountHash;
-        apiClient.fetchPlayerLuck(accountHash, plugin.getInstallToken(), ign, results ->
+        apiClient.fetchPlayerLuck(accountHash, plugin.getInstallToken(), ign, response ->
             SwingUtilities.invokeLater(() ->
             {
                 recordedFetchInFlight = null;
-                if (results != null)
+                if (response != null)
                 {
+                    List<PlayerLuckResponse.Result> results = response.results;
+                    Map<String, Integer> hunting = new HashMap<>();
+                    for (PlayerLuckResponse.Hunting h : response.hunting)
+                    {
+                        hunting.put(new BackfillPlanner.Candidate(h.itemId, h.sourceName).key(), h.kc);
+                    }
+                    huntingByAccount.put(accountHash, hunting);
                     Set<String> keys = new HashSet<>();
                     Set<String> tracked = new HashSet<>();
                     Set<String> needsSnapshot = new HashSet<>();
@@ -448,6 +460,7 @@ class LuckTrackerPanel extends PluginPanel
     {
         readyToImport = Collections.emptyList();
         snapshotUpdates = Collections.emptyList();
+        huntingPlan = new BackfillPlanner.HuntingPlan();
         importPages.setText("");
         importButton.setText("Import items");
         importButton.setEnabled(false);
@@ -481,6 +494,13 @@ class LuckTrackerPanel extends PluginPanel
         );
         readyToImport = plan.ready;
         snapshotUpdates = plan.snapshotUpdates;
+        // Needs the backend's list first, to know what's new and what to clear.
+        Map<String, Integer> serverHunting = huntingByAccount.get(accountHash);
+        if (serverHunting != null)
+        {
+            huntingPlan = BackfillPlanner.planHunting(
+                catalog, plugin.getObtainedByPage(), index, plugin.getSnapshotByPage(), serverHunting);
+        }
 
         StringBuilder summary = new StringBuilder("<html>");
         summary.append(plan.ready.size()).append(plan.ready.size() == 1 ? " item" : " items")
@@ -490,6 +510,13 @@ class LuckTrackerPanel extends PluginPanel
             summary.append("<br>").append(plan.snapshotUpdates.size())
                 .append(plan.snapshotUpdates.size() == 1 ? " imported item" : " imported items")
                 .append(" can get a luck estimate from the kill count on its log page.");
+        }
+        int huntingChanges = huntingPlan.toSync.size() + huntingPlan.obtained.size();
+        if (huntingChanges > 0)
+        {
+            summary.append("<br>").append(huntingChanges)
+                .append(huntingChanges == 1 ? " still-hunting item" : " still-hunting items")
+                .append(" to update on the website.");
         }
         if (plan.pagesRead > 0)
         {
@@ -543,6 +570,71 @@ class LuckTrackerPanel extends PluginPanel
             importButton.setText("Add luck estimates");
             importButton.setEnabled(true);
         }
+        else if (!importInFlight && !huntingPlan.isEmpty())
+        {
+            importButton.setText("Update still hunting");
+            importButton.setEnabled(true);
+        }
+    }
+
+    /**
+     * Sends the still-hunting changes a chunk at a time, removals riding
+     * along with the first chunk, then reports the whole import. Runs on
+     * the EDT, like sendImportBatch.
+     */
+    private void sendHunting(String token, String accountHash, BackfillPlanner.HuntingPlan hunting, int offset,
+        String imported)
+    {
+        List<BackfillPlanner.HuntingItem> items = hunting.toSync;
+        boolean first = offset == 0;
+        if (hunting.isEmpty() || (!first && offset >= items.size()))
+        {
+            importInFlight = false;
+            String updated = hunting.isEmpty() ? "" : "Updated " + (items.size() + hunting.obtained.size())
+                + " still-hunting item(s).";
+            statusLabel.setText("<html>" + (imported + updated).trim() + "</html>");
+            // Reload what the backend holds, so the next plan diffs against it.
+            if (!hunting.isEmpty())
+            {
+                huntingByAccount.remove(accountHash);
+                recordedByAccount.remove(accountHash);
+            }
+            refresh();
+            return;
+        }
+
+        List<SyncHuntingRequest.Item> chunk = new ArrayList<>();
+        for (BackfillPlanner.HuntingItem h : items.subList(offset, Math.min(offset + IMPORT_BATCH_SIZE, items.size())))
+        {
+            chunk.add(new SyncHuntingRequest.Item(h.itemId, h.sourceName, h.kc));
+        }
+        List<SyncHuntingRequest.Pair> obtained = new ArrayList<>();
+        if (first)
+        {
+            for (BackfillPlanner.Candidate c : hunting.obtained)
+            {
+                obtained.add(new SyncHuntingRequest.Pair(c.itemId, c.sourceName));
+            }
+        }
+
+        apiClient.syncHunting(token, accountHash, chunk, obtained, result ->
+            SwingUtilities.invokeLater(() ->
+            {
+                if (result == null)
+                {
+                    importInFlight = false;
+                    statusLabel.setText("<html>" + imported + "Couldn't update still hunting &mdash; "
+                        + "check your API settings and try again.</html>");
+                    huntingByAccount.remove(accountHash);
+                    recordedByAccount.remove(accountHash);
+                    refresh();
+                    return;
+                }
+                // At least one pass even when only removals were sent.
+                int next = offset + Math.max(chunk.size(), 1);
+                sendHunting(token, accountHash, hunting, next, imported);
+            })
+        );
     }
 
     private String displayName(BackfillPlanner.Candidate c)
@@ -554,7 +646,8 @@ class LuckTrackerPanel extends PluginPanel
     {
         List<BackfillPlanner.Candidate> toSend = new ArrayList<>(readyToImport);
         toSend.addAll(snapshotUpdates);
-        if (toSend.isEmpty())
+        BackfillPlanner.HuntingPlan hunting = huntingPlan;
+        if (toSend.isEmpty() && hunting.isEmpty())
         {
             return;
         }
@@ -568,15 +661,30 @@ class LuckTrackerPanel extends PluginPanel
             return;
         }
 
-        String question = newItems > 0
-            ? "Mark " + newItems + " item(s) as already obtained?\n\n"
+        String question;
+        if (newItems > 0)
+        {
+            question = "Mark " + newItems + " item(s) as already obtained?\n\n"
                 + "They'll show as \"logged before tracking\", with a luck estimate\n"
-                + "from the kill count on their log page where there is one.\n"
-            : "Add a luck estimate to " + toSend.size() + " imported item(s)?\n\n"
+                + "from the kill count on their log page where there is one.\n";
+        }
+        else if (!toSend.isEmpty())
+        {
+            question = "Add a luck estimate to " + toSend.size() + " imported item(s)?\n\n"
                 + "It's based on the kill count and quantity on their log page.\n";
+        }
+        else
+        {
+            question = "Update your \"still hunting\" list on the website?\n\n"
+                + "It shows the drops your log pages are missing, with their kill counts.\n";
+        }
+        if (!hunting.isEmpty() && !toSend.isEmpty())
+        {
+            question += "\nYour \"still hunting\" list on the website updates too.\n";
+        }
         int choice = JOptionPane.showConfirmDialog(
             this,
-            question + "This can't be undone.",
+            question + (toSend.isEmpty() ? "" : "Imports can't be undone."),
             "Import from collection log",
             JOptionPane.OK_CANCEL_OPTION
         );
@@ -588,7 +696,8 @@ class LuckTrackerPanel extends PluginPanel
         importInFlight = true;
         importButton.setEnabled(false);
         importSnapshotUpdates = toSend.size() - newItems;
-        statusLabel.setText("Importing " + toSend.size() + " item(s)...");
+        importHunting = hunting;
+        statusLabel.setText(toSend.isEmpty() ? "Updating still hunting..." : "Importing " + toSend.size() + " item(s)...");
         sendImportBatch(token, accountHash, toSend, 0, 0, 0, 0);
     }
 
@@ -601,12 +710,11 @@ class LuckTrackerPanel extends PluginPanel
     {
         if (offset >= all.size())
         {
-            importInFlight = false;
             int recordedBefore = Math.max(0, alreadyRecorded - importSnapshotUpdates);
-            statusLabel.setText("<html>Imported " + inserted + " item(s)"
+            String imported = all.isEmpty() ? "" : "Imported " + inserted + " item(s)"
                 + (snapshotsAdded > 0 ? ", added " + snapshotsAdded + " luck estimate(s)" : "")
-                + (recordedBefore > 0 ? ", " + recordedBefore + " were already recorded" : "") + ".</html>");
-            refresh();
+                + (recordedBefore > 0 ? ", " + recordedBefore + " were already recorded" : "") + ". ";
+            sendHunting(token, accountHash, importHunting, 0, imported);
             return;
         }
 

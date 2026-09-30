@@ -27,15 +27,56 @@ final class LogPageSnapshot
     // The header's "Obtained: 12/24" line never matches KC_LINE (the slash),
     // but a future "Obtained: 12" shouldn't be read as a kill count either.
     private static final String OBTAINED_LABEL = "obtained";
+    // "Obtained: <col=ffff00>3/12</col>" once tags are stripped.
+    private static final Pattern OBTAINED_LINE = Pattern.compile("^Obtained:\\s*([0-9]+)\\s*/\\s*[0-9]+$",
+        Pattern.CASE_INSENSITIVE);
 
     final int kc;
     /** Item id -> quantity shown, for obtained non-stackable items only. */
     final Map<Integer, Integer> quantities;
+    /**
+     * The header's own count of obtained slots, or null if it had none.
+     * "Still hunting" rows are only sent when the slots read as obtained
+     * add up to this, so a page drawn with slots still faded can't list
+     * items the player has as missing.
+     */
+    final Integer obtainedShown;
 
     LogPageSnapshot(int kc, Map<Integer, Integer> quantities)
     {
+        this(kc, quantities, null);
+    }
+
+    LogPageSnapshot(int kc, Map<Integer, Integer> quantities, Integer obtainedShown)
+    {
         this.kc = kc;
         this.quantities = Collections.unmodifiableMap(new TreeMap<>(quantities));
+        this.obtainedShown = obtainedShown;
+    }
+
+    /** The x in the header's "Obtained: x/y", or null if there's no such line. */
+    static Integer parseObtainedCount(List<String> headerLines)
+    {
+        for (String line : headerLines)
+        {
+            if (line == null)
+            {
+                continue;
+            }
+            Matcher m = OBTAINED_LINE.matcher(Text.removeTags(line).replace('\u00a0', ' ').trim());
+            if (m.matches())
+            {
+                try
+                {
+                    return Integer.parseInt(m.group(1));
+                }
+                catch (NumberFormatException e)
+                {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     // Pages whose catalog rates roll per something other than a kill, keyed
@@ -63,7 +104,7 @@ final class LogPageSnapshot
             {
                 continue;
             }
-            Matcher m = KC_LINE.matcher(Text.removeTags(line).replace(' ', ' ').trim());
+            Matcher m = KC_LINE.matcher(Text.removeTags(line).replace('\u00a0', ' ').trim());
             String label = m.matches() ? m.group(1).trim().toLowerCase(Locale.ROOT) : null;
             if (label == null || label.equals(OBTAINED_LABEL))
             {
@@ -103,7 +144,10 @@ final class LogPageSnapshot
         }
         Map<Integer, Integer> merged = new HashMap<>(quantities);
         other.quantities.forEach((id, q) -> merged.merge(id, q, Math::max));
-        return new LogPageSnapshot(Math.max(kc, other.kc), merged);
+        Integer shown = obtainedShown == null ? other.obtainedShown
+            : other.obtainedShown == null ? obtainedShown
+            : Integer.valueOf(Math.max(obtainedShown, other.obtainedShown));
+        return new LogPageSnapshot(Math.max(kc, other.kc), merged, shown);
     }
 
     /** Quantity for the item, or null if it wasn't captured (unobtained or stackable). */
@@ -118,12 +162,13 @@ final class LogPageSnapshot
         if (this == o) return true;
         if (!(o instanceof LogPageSnapshot)) return false;
         LogPageSnapshot that = (LogPageSnapshot) o;
-        return kc == that.kc && quantities.equals(that.quantities);
+        return kc == that.kc && quantities.equals(that.quantities)
+            && java.util.Objects.equals(obtainedShown, that.obtainedShown);
     }
 
     @Override
     public int hashCode()
     {
-        return 31 * kc + quantities.hashCode();
+        return java.util.Objects.hash(kc, quantities, obtainedShown);
     }
 }

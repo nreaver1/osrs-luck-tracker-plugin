@@ -213,6 +213,70 @@ class BackfillPlannerTest
     }
 
     @Test
+    void emptySlotsOnAConsistentPageAreStillHunting()
+    {
+        // Graardor read with 1 obtained slot, and the header agrees.
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, Collections.emptyMap(), 1));
+
+        BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE)), index, snapshots, Collections.emptyMap());
+
+        // The shard counts too: an empty slot means none from any source.
+        assertEquals(keys(GODSWORD_SHARD_1 + "|General Graardor"), huntingKeys(plan.toSync));
+        assertEquals(1100, plan.toSync.get(0).kc);
+        assertTrue(plan.obtained.isEmpty());
+    }
+
+    @Test
+    void noHuntingFromAPageWhoseSlotsDontMatchItsHeader()
+    {
+        // The header says 2 obtained but only 1 slot read that way: drawn
+        // mid-fade, so its empty slots can't be trusted. Same for a save
+        // from before the header count was kept.
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, Collections.emptyMap(), 2));
+        snapshots.put("Kree'arra", new LogPageSnapshot(500, Collections.emptyMap()));
+
+        BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE), "Kree'arra", set()),
+            index, snapshots, Collections.emptyMap());
+
+        assertTrue(plan.isEmpty());
+    }
+
+    @Test
+    void huntingSyncsOnlyChangesAndClearsObtainedItems()
+    {
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("General Graardor", new LogPageSnapshot(1100, Collections.emptyMap(), 1));
+        snapshots.put("Kree'arra", new LogPageSnapshot(500, Collections.emptyMap(), 0));
+        Map<String, Integer> server = new HashMap<>();
+        server.put(BANDOS_CHESTPLATE + "|General Graardor", 900); // since obtained
+        server.put(GODSWORD_SHARD_1 + "|General Graardor", 1100); // unchanged
+        server.put(ARMADYL_HELMET + "|Kree'arra", 400);           // more kills since
+
+        BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
+            pages("General Graardor", set(BANDOS_CHESTPLATE), "Kree'arra", set()), index, snapshots, server);
+
+        assertEquals(keys(ARMADYL_HELMET + "|Kree'arra", GODSWORD_SHARD_1 + "|Kree'arra"), huntingKeys(plan.toSync));
+        assertEquals(keys(BANDOS_CHESTPLATE + "|General Graardor"), keysOf(plan.obtained));
+    }
+
+    @Test
+    void noHuntingForNonFlatRates()
+    {
+        // The fang's rate here isn't flat.
+        Map<String, LogPageSnapshot> snapshots = new HashMap<>();
+        snapshots.put("Zulrah", new LogPageSnapshot(300, Collections.emptyMap(), 0));
+
+        BackfillPlanner.HuntingPlan plan = BackfillPlanner.planHunting(catalog,
+            pages("Zulrah", set()), index, snapshots, Collections.emptyMap());
+
+        assertTrue(plan.isEmpty());
+    }
+
+    @Test
     void dropdownFilterKeepsOnlySlotsOnTheSourcesOwnPage()
     {
         assertTrue(BackfillPlanner.isLogItemForSource(BANDOS_CHESTPLATE, "General Graardor", index));
@@ -276,6 +340,13 @@ class BackfillPlannerTest
     private static Set<String> keys(String... keys)
     {
         return new HashSet<>(Arrays.asList(keys));
+    }
+
+    private static Set<String> huntingKeys(List<BackfillPlanner.HuntingItem> items)
+    {
+        Set<String> out = new HashSet<>();
+        items.forEach(h -> out.add(h.key()));
+        return out;
     }
 
     private static Set<String> keysOf(List<BackfillPlanner.Candidate> candidates)
