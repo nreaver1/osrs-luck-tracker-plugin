@@ -201,13 +201,15 @@ class LuckTrackerPanel extends PluginPanel
 
         backlog.add(Box.createVerticalStrut(6));
 
-        importSummary = new JLabel("Loading items...");
-        importSummary.setAlignmentX(Component.CENTER_ALIGNMENT);
-        backlog.add(importSummary);
-
+        // Pages to open first: the item list below grows as pages are read,
+        // and this is what the player works through while it does.
         importPages = new JLabel();
         importPages.setAlignmentX(Component.CENTER_ALIGNMENT);
         backlog.add(importPages);
+
+        importSummary = new JLabel("Loading items...");
+        importSummary.setAlignmentX(Component.CENTER_ALIGNMENT);
+        backlog.add(importSummary);
 
         backlog.add(Box.createVerticalStrut(6));
 
@@ -591,7 +593,8 @@ class LuckTrackerPanel extends PluginPanel
             appendPageList(pages, "Pages still to open:", plan.pagesToOpen);
             appendPageList(pages, "Pages to open again (they were read while loading, so what you're still "
                 + "hunting there isn't known yet):", reopen);
-            importPages.setText(pages.append("</html>").toString());
+            // A gap before the item summary that now follows it.
+            importPages.setText(pages.append("<br><br></html>").toString());
         }
 
         boolean pending = !plan.ready.isEmpty() || !plan.snapshotUpdates.isEmpty() || !huntingPlan.isEmpty();
@@ -699,7 +702,12 @@ class LuckTrackerPanel extends PluginPanel
         {
             return;
         }
-        html.append("<br>").append(heading);
+        // A break between lists, but not before the first one.
+        if (html.length() > "<html>".length())
+        {
+            html.append("<br><br>");
+        }
+        html.append(heading);
         int listed = 0;
         for (String page : pages)
         {
