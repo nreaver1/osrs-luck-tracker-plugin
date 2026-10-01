@@ -1,10 +1,50 @@
-# OSRS Collection Log Luck Tracker — RuneLite Plugin
+# Collection Log Luck Tracker
 
-Sends new collection log drops to your deployed backend as they happen,
-so the website shows real data instead of the seed script from earlier
-in this build.
+A RuneLite plugin that shows how spooned or dry you were for each
+collection log drop. New boss and raid drops are recorded with the kill
+count you got them at, and your log is published at
+https://osrs-luck-tracker.vercel.app, where each item is rated against
+its drop rate (spooned, average, dry or desert), alongside the items
+you're still hunting and an optional luckiest/driest leaderboard.
 
-## What this actually does
+## Getting started
+
+1. Install the plugin and log in. Your account registers itself.
+2. Open your collection log and click through the pages the side panel
+   lists, then press the import button once. This brings in items you
+   already had before installing.
+3. That's it. From then on new drops, kill counts and log pages you
+   open sync by themselves.
+
+## What's sent, and where
+
+Everything goes to the Luck Tracker backend (a Supabase project run by
+the plugin's author), over HTTPS:
+
+- **On first login:** your account hash and in-game name, to register
+  the account. The server returns an install token, which RuneLite
+  stores in your profile and which authorises every later request. Your
+  account hash is never shown on the website.
+- **When you get a new collection log item from a boss or raid:** the
+  item, the boss, and your kill count.
+- **When you open collection log pages:** for boss and raid pages, the
+  items you have and their quantities, the items you're missing, and
+  the page's kill count.
+- **While you play:** kill counts from boss kill messages, batched at
+  most once a minute and at logout.
+- **When you change the plugin settings:** the two visibility settings
+  below.
+
+As with any website, the server also sees your IP address; it is used
+only for rate limiting. Nothing is sent about your bank, inventory,
+location, chat (other than the kill-count and collection log messages
+above) or other players. Turn off "Show my log on the website" to keep
+your log off the site, or disable the plugin to stop sending anything.
+
+Bug reports and questions:
+https://github.com/nreaver1/osrs-luck-tracker-plugin/issues
+
+## How it works
 
 1. On login, calls `/register` once per account (result cached locally),
    getting back an `install_token`.
@@ -99,50 +139,14 @@ on anything fragile, and fails closed when something does change:
   adventure log in a POH is ignored. The owner is detected the same way
   as in RuneLite's Chat Commands plugin.
 
-`BackfillPlanner` and `KillCountMessage` are pure logic with unit tests:
-`./gradlew test --tests com.osrslucktracker.BackfillPlannerTest`.
+`BackfillPlanner`, `KillCountMessage` and `LogPageSnapshot` are pure
+logic with unit tests (`./gradlew test`).
 
-## What I could and couldn't verify
+## Development
 
-**I could verify:** the `build.gradle` structure, group/version
-conventions, and dependency versions were cross-checked against a real,
-currently-merged Plugin Hub repository (fetched live from GitHub while
-building this), not written from memory alone. The Java files also
-passed a syntax check with `javac` — no brace/semicolon/typo-level
-errors. This check caught a real bug during the backfill feature
-addition (an edit accidentally truncated `ApiClient.java` mid-method),
-which is exactly the kind of thing `javac` is good for catching even
-without the real dependencies available.
-
-**I could NOT verify:** this sandbox has no network access to
-`repo.runelite.net` or Maven Central, so I was never able to run
-`gradlew build` against the actual `runelite-client` jar. That means
-the specific method signatures I'm relying on — `client.getAccountHash()`,
-`itemManager.search(name)`, `itemManager.getItemComposition(id)`,
-`ImageUtil.loadImageResource()`,
-`configManager.getConfiguration()/setConfiguration()`, the injected
-`OkHttpClient`/`Gson` — are based on stable, long-standing RuneLite API
-patterns I'm confident about, but **not compiled against a real
-version**. Treat this as a strong first draft, not a finished, tested
-plugin. (Your Gradle sync + successful run of the core plugin already
-confirmed the first three of those method calls are correct —
-`itemManager.getItemComposition()`, used only in the new backfill
-dropdown, hasn't been exercised yet.)
-
-## Before you trust this, do this
-
-1. Open the project in IntelliJ (RuneLite's plugin docs recommend
-   IntelliJ Community + Java 11).
-2. Let Gradle sync — this pulls the real `runelite-client` jar and will
-   immediately surface any method that's actually named or shaped
-   differently than I've assumed.
-3. Fix whatever Gradle/the IDE flags red. Given the syntax is clean and
-   the APIs used are all long-stable ones, I'd expect this to be small
-   fixes, not a rewrite — but I can't promise zero errors without having
-   compiled it myself.
-4. Run the plugin against RuneLite's test client (the standard `Run
-   test` Gradle task from the plugin template) before trusting it with
-   your real account.
+`./gradlew build` compiles against the real `runelite-client` and runs
+the tests. `./gradlew run` starts a RuneLite dev client with the plugin
+loaded (`LuckTrackerPluginTest`).
 
 ## Configuration
 
@@ -165,8 +169,8 @@ The backend URL and publishable key are hidden config items
 
 ## Known limitations (by design, not bugs)
 
-- **Only tracks drops that follow a kill-count message within 5
-  seconds.** Boss drops work well since RuneLite prints kill count on
+- **Only tracks drops that follow a kill-count message within 60
+  seconds** (10 minutes after a raid). Boss drops work well since RuneLite prints kill count on
   every kill. Non-boss collection log sources — clue scrolls, skilling
   pets, minigame-specific unlocks — don't print a kill-count message,
   so this plugin currently has no way to know which "source" to

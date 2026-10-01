@@ -1,0 +1,7 @@
+.gradle/
+build/
+out/
+.idea/
+*.iml
+run-dev-client.bat
+run-dev-client.ico
