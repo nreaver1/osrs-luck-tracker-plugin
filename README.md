@@ -1,11 +1,11 @@
-# Collection Log Luck Tracker
+# Clog Casino
 
 A RuneLite plugin that shows how spooned or dry you were for each
 collection log drop. New boss and raid drops are recorded with the kill
-count you got them at, and your log is published at
-https://osrs-luck-tracker.vercel.app, where each item is rated against
-its drop rate (spooned, average, dry or desert), alongside the items
-you're still hunting and an optional luckiest/driest leaderboard.
+count you got them at, and the Clog Casino website
+(https://osrs-luck-tracker.vercel.app) rates each item against its drop
+rate (spooned, average, dry or desert), alongside the items you're still
+hunting and an optional luckiest/driest leaderboard.
 
 ## Getting started
 
@@ -13,12 +13,13 @@ you're still hunting and an optional luckiest/driest leaderboard.
 2. Open your collection log and click through the pages the side panel
    lists, then press the import button once. This brings in items you
    already had before installing.
-3. That's it. From then on new drops, kill counts and log pages you
-   open sync by themselves.
+3. Your log is private until you turn on **Show my log on the website**
+   in the plugin's settings. From then on anyone can look it up by name.
+4. New drops, kill counts and log pages you open sync by themselves.
 
 ## What's sent, and where
 
-Everything goes to the Luck Tracker backend (a Supabase project run by
+Everything goes to the Clog Casino backend (a Supabase project run by
 the plugin's author), over HTTPS:
 
 - **On first login:** your account hash and in-game name, to register
@@ -38,8 +39,9 @@ the plugin's author), over HTTPS:
 As with any website, the server also sees your IP address; it is used
 only for rate limiting. Nothing is sent about your bank, inventory,
 location, chat (other than the kill-count and collection log messages
-above) or other players. Turn off "Show my log on the website" to keep
-your log off the site, or disable the plugin to stop sending anything.
+above) or other players. Nobody can look up your log on the site unless
+you turn on "Show my log on the website". Disable the plugin to stop
+sending anything.
 
 Bug reports and questions:
 https://github.com/nreaver1/osrs-luck-tracker-plugin/issues
@@ -151,7 +153,7 @@ loaded (`LuckTrackerPluginTest`).
 ## Configuration
 
 The plugin settings have two checkboxes:
-- **Show my log on the website** (on by default). When off, looking up
+- **Show my log on the website** (off by default). When off, looking up
   your name on the website says no player is logged under it, and you're
   left off the leaderboard. Drops are still recorded, and the plugin's
   own panel and collection log check keep working: they read your drops

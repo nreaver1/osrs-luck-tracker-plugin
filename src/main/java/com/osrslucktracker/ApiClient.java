@@ -129,7 +129,7 @@ class ApiClient
                 {
                     if (r.isSuccessful())
                     {
-                        log.info("Logged item {} from {} at {} kc", itemId, sourceName, kcReceived);
+                        log.debug("Logged item {} from {} at {} kc", itemId, sourceName, kcReceived);
                         onLogged.run();
                     }
                     else

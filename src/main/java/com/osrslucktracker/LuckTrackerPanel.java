@@ -48,6 +48,7 @@ class LuckTrackerPanel extends PluginPanel
 
     private final JLabel statusLabel;
     private final JLabel tokenRejectedLabel;
+    private final JLabel profileHiddenLabel;
     private final JLabel bossKcLabel;
     private final JLabel importSummary;
     private final JLabel importPages;
@@ -105,7 +106,7 @@ class LuckTrackerPanel extends PluginPanel
         JPanel content = new JPanel();
         content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
 
-        JLabel title = new JLabel("Collection Log Luck Tracker");
+        JLabel title = new JLabel("Clog Casino");
         title.setAlignmentX(Component.CENTER_ALIGNMENT);
         content.add(title);
 
@@ -134,6 +135,16 @@ class LuckTrackerPanel extends PluginPanel
             }
         });
         content.add(websiteLink);
+
+        // Logs are private until the player turns on "Show my log on the website".
+        profileHiddenLabel = new JLabel(
+            "<html><div style='text-align:center'>Your log is private. Turn on \"Show my log on the website\" "
+                + "in this plugin's settings to share it.</div></html>"
+        );
+        profileHiddenLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+        profileHiddenLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        profileHiddenLabel.setVisible(!plugin.isProfileShown());
+        content.add(profileHiddenLabel);
 
         content.add(Box.createVerticalStrut(8));
 
@@ -341,9 +352,16 @@ class LuckTrackerPanel extends PluginPanel
     void refresh()
     {
         tokenRejectedLabel.setVisible(plugin.isTokenRejected());
+        refreshProfileNote();
         fetchRecordedDropsIfNeeded();
         refreshCollectionLogImport();
         rebuildDropdown();
+    }
+
+    /** Shows the "your log is private" note while the profile is hidden. Runs on the EDT. */
+    void refreshProfileNote()
+    {
+        profileHiddenLabel.setVisible(!plugin.isProfileShown());
     }
 
     /** Loads which drops the database already has for this account, once per account per session. */

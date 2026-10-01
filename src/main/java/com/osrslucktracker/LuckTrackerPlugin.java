@@ -52,23 +52,14 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Reports new collection log drops to the OSRS Luck Tracker backend so
+ * Reports new collection log drops to the Clog Casino backend so
  * players can see how spooned or dry they were, compared against the
  * published drop rate and the wider player base.
- *
- * IMPORTANT — this plugin's correctness has NOT been verified against a
- * real compile of the RuneLite client from this environment. The
- * sandbox this was built in has no network access to repo.runelite.net
- * or Maven Central, so `gradlew build` was never run here directly.
- * Everything in this file has, however, now been confirmed working
- * against a real RuneLite test client by the person using it — the
- * account-hash, chat-message, and config APIs below are proven correct
- * in practice, not just in theory.
  */
 @Slf4j
 @PluginDescriptor(
-    name = "Collection Log Luck Tracker",
-    description = "Reports how spooned or dry you are for new collection log drops",
+    name = "Clog Casino",
+    description = "Shows how spooned or dry you were for each collection log drop",
     tags = {"collection", "log", "luck", "drop rate"}
 )
 public class LuckTrackerPlugin extends Plugin
@@ -234,6 +225,12 @@ public class LuckTrackerPlugin extends Plugin
         return configManager.getConfig(LuckTrackerConfig.class);
     }
 
+    /** Whether the player chose to show their log on the website (off by default). */
+    boolean isProfileShown()
+    {
+        return config.showProfile();
+    }
+
     @Override
     protected void startUp()
     {
@@ -241,7 +238,7 @@ public class LuckTrackerPlugin extends Plugin
 
         BufferedImage icon = ImageUtil.loadImageResource(getClass(), "icon.png");
         navButton = NavigationButton.builder()
-            .tooltip("Luck Tracker")
+            .tooltip("Clog Casino")
             .icon(icon)
             .priority(6)
             .panel(panel)
@@ -344,6 +341,11 @@ public class LuckTrackerPlugin extends Plugin
             && (LuckTrackerConfig.SHOW_PROFILE_KEY.equals(event.getKey())
                 || LuckTrackerConfig.SHOW_ON_LEADERBOARD_KEY.equals(event.getKey())))
         {
+            LuckTrackerPanel p = panel;
+            if (p != null)
+            {
+                SwingUtilities.invokeLater(p::refreshProfileNote);
+            }
             clientThread.invokeLater(() ->
             {
                 // A deliberate change goes out now, not after the retry wait.
@@ -399,7 +401,7 @@ public class LuckTrackerPlugin extends Plugin
             {
                 configManager.setConfiguration("lucktracker", hash, SYNCED_SETTINGS_KEY, settings);
                 settingsSynced = synced;
-                log.info("Luck Tracker visibility saved: profile {}, leaderboard {}",
+                log.debug("Clog Casino visibility saved: profile {}, leaderboard {}",
                     profilePublic ? "shown" : "hidden", leaderboard ? "on" : "off");
             }
         }));
@@ -453,7 +455,7 @@ public class LuckTrackerPlugin extends Plugin
             client.getVarcStrValue(VarClientID.NOTIFICATION_MAIN));
         if (itemName != null)
         {
-            log.info("Collection log drop '{}' seen (popup)", itemName);
+            log.debug("Collection log drop '{}' seen (popup)", itemName);
             handleCollectionLogDrop(itemName);
         }
     }
@@ -870,14 +872,14 @@ public class LuckTrackerPlugin extends Plugin
                 return;
             }
             lastRegisterAttemptMs = now;
-            log.debug("Registering {} with the Luck Tracker backend", ign);
+            log.debug("Registering {} with the Clog Casino backend", ign);
 
             apiClient.register(hash, ign, hasToken ? existingToken : null, token ->
             {
                 configManager.setConfiguration("lucktracker", hash, "installToken", token);
                 configManager.setConfiguration("lucktracker", hash, REGISTERED_IGN_KEY, ign);
                 registeredAccountHash = hash;
-                log.info("Registered {} with the Luck Tracker backend", ign);
+                log.info("Registered {} with the Clog Casino backend", ign);
             }, () ->
             {
                 tokenRejectedAccountHash = hash;
@@ -936,7 +938,7 @@ public class LuckTrackerPlugin extends Plugin
         String itemName = CollectionLogMessage.parseItemName(message);
         if (itemName != null)
         {
-            log.info("Collection log drop '{}' seen ({} message)", itemName, event.getType());
+            log.debug("Collection log drop '{}' seen ({} message)", itemName, event.getType());
             handleCollectionLogDrop(itemName);
             return;
         }
@@ -1073,7 +1075,7 @@ public class LuckTrackerPlugin extends Plugin
         long now = System.currentTimeMillis();
         if (itemName.equalsIgnoreCase(lastDropItem) && now - lastDropTimestampMs <= DUPLICATE_DROP_MS)
         {
-            log.info("Collection log drop '{}' already handled from the other notification — ignoring", itemName);
+            log.debug("Collection log drop '{}' already handled from the other notification — ignoring", itemName);
             return;
         }
         lastDropItem = itemName;
