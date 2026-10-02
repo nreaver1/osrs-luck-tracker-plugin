@@ -161,6 +161,7 @@ class ApiClient
             public void onFailure(Call call, IOException e)
             {
                 log.warn("Catalog fetch failed", e);
+                onResult.accept(null);
             }
 
             @Override
@@ -171,17 +172,16 @@ class ApiClient
                     if (!r.isSuccessful() || r.body() == null)
                     {
                         log.warn("Catalog fetch returned HTTP {}", r.code());
+                        onResult.accept(null);
                         return;
                     }
                     CatalogResponse parsed = gson.fromJson(r.body().string(), CatalogResponse.class);
-                    if (parsed != null && parsed.entries != null)
-                    {
-                        onResult.accept(parsed.entries);
-                    }
+                    onResult.accept(parsed != null ? parsed.entries : null);
                 }
                 catch (Exception e)
                 {
                     log.warn("Failed to parse catalog response", e);
+                    onResult.accept(null);
                 }
             }
         });

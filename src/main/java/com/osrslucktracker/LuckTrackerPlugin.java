@@ -257,6 +257,11 @@ public class LuckTrackerPlugin extends Plugin
     protected void shutDown()
     {
         clientToolbar.removeNavigation(navButton);
+        LuckTrackerPanel p = panel;
+        if (p != null)
+        {
+            SwingUtilities.invokeLater(p::shutDown);
+        }
         bossKillCounts.clear();
         sessionKillCounts.clear();
         sessionLogSlots.clear();

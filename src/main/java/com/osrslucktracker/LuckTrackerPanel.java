@@ -92,6 +92,14 @@ class LuckTrackerPanel extends PluginPanel
     private String lastAutoFingerprint;
     private long autoSyncBlockedUntilMs;
 
+    // A failed catalog load (offline at launch, a backend blip) is retried,
+    // waiting twice as long each time, so the panel doesn't stay on
+    // "Loading items..." until RuneLite restarts.
+    private static final int CATALOG_RETRY_MIN_MS = 5_000;
+    private static final int CATALOG_RETRY_MAX_MS = 300_000;
+    private int catalogRetryMs = CATALOG_RETRY_MIN_MS;
+    private final javax.swing.Timer catalogRetryTimer = new javax.swing.Timer(CATALOG_RETRY_MIN_MS, e -> loadCatalog());
+
     LuckTrackerPanel(LuckTrackerPlugin plugin, ApiClient apiClient, ItemManager itemManager, ClientThread clientThread)
     {
         super();
@@ -271,6 +279,12 @@ class LuckTrackerPanel extends PluginPanel
     private void loadCatalog()
     {
         apiClient.fetchCatalog(entries ->
+        {
+            if (entries == null)
+            {
+                SwingUtilities.invokeLater(this::scheduleCatalogRetry);
+                return;
+            }
             // ItemManager.getItemComposition() (called inside buildChoices,
             // via resolveItemName) asserts it's running on the client
             // thread — it will throw otherwise. The OkHttp callback that
@@ -286,6 +300,7 @@ class LuckTrackerPanel extends PluginPanel
                 SwingUtilities.invokeLater(() ->
                 {
                     catalog = entries;
+                    catalogRetryMs = CATALOG_RETRY_MIN_MS;
                     for (CatalogChoice choice : choices)
                     {
                         itemNames.put(new BackfillPlanner.Candidate(choice.itemId, choice.sourceName).key(), choice.itemName);
@@ -293,8 +308,24 @@ class LuckTrackerPanel extends PluginPanel
                     allChoices = choices;
                     refresh();
                 });
-            })
-        );
+            });
+        });
+    }
+
+    /** Runs on the EDT. */
+    private void scheduleCatalogRetry()
+    {
+        catalogRetryTimer.setInitialDelay(catalogRetryMs);
+        catalogRetryTimer.setRepeats(false);
+        catalogRetryTimer.restart();
+        catalogRetryMs = Math.min(catalogRetryMs * 2, CATALOG_RETRY_MAX_MS);
+    }
+
+    /** Stops pending retries and automatic syncs when the plugin is turned off. Runs on the EDT. */
+    void shutDown()
+    {
+        catalogRetryTimer.stop();
+        autoSyncTimer.stop();
     }
 
     /** Runs on the client thread — safe to call itemManager here. */
