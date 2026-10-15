@@ -415,8 +415,9 @@ class ApiClient
     /**
      * Kill counts seen in chat since the last send, for /update-kc. Fire and
      * forget: the next batch or the next log read catches up after a failure.
+     * onSuccess runs (on OkHttp's thread) once the backend has taken them.
      */
-    void updateKillCounts(String installToken, String accountHash, Map<String, Integer> counts)
+    void updateKillCounts(String installToken, String accountHash, Map<String, Integer> counts, Runnable onSuccess)
     {
         if (config.apiBaseUrl().isEmpty() || counts.isEmpty())
         {
@@ -446,8 +447,10 @@ class ApiClient
                     if (!r.isSuccessful())
                     {
                         log.debug("Update-kc returned HTTP {} ({} counts)", r.code(), list.size());
+                        return;
                     }
                 }
+                onSuccess.run();
             }
         });
     }

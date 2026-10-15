@@ -4,13 +4,14 @@ import net.runelite.client.callback.ClientThread;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.ui.components.materialtabs.MaterialTab;
+import net.runelite.client.ui.components.materialtabs.MaterialTabGroup;
 import net.runelite.client.util.LinkBrowser;
 
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
-import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiFunction;
 
 class LuckTrackerPanel extends PluginPanel
 {
@@ -50,6 +52,8 @@ class LuckTrackerPanel extends PluginPanel
     private final JLabel tokenRejectedLabel;
     private final JLabel profileHiddenLabel;
     private final JLabel bossKcLabel;
+    private final LuckSummaryPanel luckSummary;
+    private final LuckDetailsPanel luckDetails;
     private final JLabel importSummary;
     private final JLabel importPages;
     private final JButton importButton;
@@ -67,6 +71,8 @@ class LuckTrackerPanel extends PluginPanel
     private final Map<String, Map<String, Integer>> huntingByAccount = new HashMap<>();
     // account hash -> catalog source -> page read the backend holds
     private final Map<String, Map<String, SyncHuntingRequest.Page>> pagesByAccount = new HashMap<>();
+    // account hash -> latest /get-player-luck response, for the luck summary
+    private final Map<String, PlayerLuckResponse> luckByAccount = new HashMap<>();
     private String recordedFetchInFlight;
     private final Map<String, String> itemNames = new HashMap<>();
     // account hash -> Candidate keys already submitted this session
@@ -129,21 +135,6 @@ class LuckTrackerPanel extends PluginPanel
 
         content.add(Box.createVerticalStrut(4));
 
-        JLabel websiteLink = new JLabel("<html><u>View your luck on the website</u></html>");
-        websiteLink.setForeground(ColorScheme.BRAND_ORANGE);
-        websiteLink.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        websiteLink.setToolTipText(WEBSITE_URL);
-        websiteLink.setAlignmentX(Component.CENTER_ALIGNMENT);
-        websiteLink.addMouseListener(new MouseAdapter()
-        {
-            @Override
-            public void mouseClicked(MouseEvent e)
-            {
-                LinkBrowser.browse(WEBSITE_URL);
-            }
-        });
-        content.add(websiteLink);
-
         // Logs are private until the player turns on "Show my log on the website".
         profileHiddenLabel = new JLabel(
             "<html><div style='text-align:center'>Your log is private. Turn on \"Show my log on the website\" "
@@ -188,20 +179,26 @@ class LuckTrackerPanel extends PluginPanel
         bossKcLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
         content.add(bossKcLabel);
 
-        content.add(Box.createVerticalStrut(12));
+        content.add(Box.createVerticalStrut(10));
 
-        // Backlogging is a one-time step, so it stays collapsed by default.
+        // --- "My luck" tab: the website's player page, cut down ---
+
+        JPanel luckTab = new JPanel();
+        luckTab.setLayout(new BoxLayout(luckTab, BoxLayout.Y_AXIS));
+
+        luckSummary = new LuckSummaryPanel(itemManager, WEBSITE_URL);
+        luckTab.add(luckSummary);
+
+        luckTab.add(Box.createVerticalStrut(10));
+
+        luckDetails = new LuckDetailsPanel(itemManager);
+        luckTab.add(luckDetails);
+
+        // --- "Backlog" tab: the one-time import tools ---
+
         JPanel backlog = new JPanel();
         backlog.setLayout(new BoxLayout(backlog, BoxLayout.Y_AXIS));
         backlog.setAlignmentX(Component.CENTER_ALIGNMENT);
-        backlog.setVisible(false);
-
-        JCheckBox backlogToggle = new JCheckBox("Backlog existing collection log items");
-        backlogToggle.setAlignmentX(Component.CENTER_ALIGNMENT);
-        backlogToggle.addItemListener(e -> backlog.setVisible(backlogToggle.isSelected()));
-        content.add(backlogToggle);
-
-        backlog.add(Box.createVerticalStrut(8));
 
         // --- Import from the in-game collection log ---
 
@@ -269,7 +266,17 @@ class LuckTrackerPanel extends PluginPanel
         backfillButton.addActionListener(e -> onBackfillClicked());
         backlog.add(backfillButton);
 
-        content.add(backlog);
+        JPanel display = new JPanel();
+        MaterialTabGroup tabs = new MaterialTabGroup(display);
+        tabs.setAlignmentX(Component.CENTER_ALIGNMENT);
+        display.setAlignmentX(Component.CENTER_ALIGNMENT);
+        display.setBorder(BorderFactory.createEmptyBorder(8, 0, 0, 0));
+        MaterialTab luckTabButton = new MaterialTab("My luck", tabs, luckTab);
+        tabs.addTab(luckTabButton);
+        tabs.addTab(new MaterialTab("Backlog", tabs, backlog));
+        tabs.select(luckTabButton);
+        content.add(tabs);
+        content.add(display);
 
         add(content, BorderLayout.NORTH);
 
@@ -385,6 +392,7 @@ class LuckTrackerPanel extends PluginPanel
         tokenRejectedLabel.setVisible(plugin.isTokenRejected());
         refreshProfileNote();
         fetchRecordedDropsIfNeeded();
+        refreshLuckSummary();
         refreshCollectionLogImport();
         rebuildDropdown();
     }
@@ -393,6 +401,35 @@ class LuckTrackerPanel extends PluginPanel
     void refreshProfileNote()
     {
         profileHiddenLabel.setVisible(!plugin.isProfileShown());
+        // The summary's website link depends on the profile being public.
+        refreshLuckSummary();
+    }
+
+    /**
+     * Takes a fresh /get-player-luck response for an account, e.g. after
+     * a new drop is recorded. Runs on the EDT.
+     */
+    void showLuck(String accountHash, PlayerLuckResponse response)
+    {
+        luckByAccount.put(accountHash, response);
+        refreshLuckSummary();
+    }
+
+    /** Shows the logged-in account's summary, or hides it. Runs on the EDT. */
+    private void refreshLuckSummary()
+    {
+        String accountHash = plugin.getCurrentAccountHash();
+        PlayerLuckResponse response = accountHash != null ? luckByAccount.get(accountHash) : null;
+        if (response == null)
+        {
+            luckSummary.clear();
+            luckDetails.clear();
+            return;
+        }
+        BiFunction<Integer, String, String> itemName = (itemId, source) ->
+            itemNames.getOrDefault(new BackfillPlanner.Candidate(itemId, source).key(), "Item #" + itemId);
+        luckSummary.show(response, plugin.getLocalPlayerName(), plugin.isProfileShown(), itemName);
+        luckDetails.show(response, itemName);
     }
 
     /** Loads which drops the database already has for this account, once per account per session. */
@@ -413,6 +450,7 @@ class LuckTrackerPanel extends PluginPanel
                 recordedFetchInFlight = null;
                 if (response != null)
                 {
+                    luckByAccount.put(accountHash, response);
                     List<PlayerLuckResponse.Result> results = response.results;
                     Map<String, Integer> hunting = new HashMap<>();
                     // The raw rows, not the display list, which hides pooled pairs.

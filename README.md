@@ -10,12 +10,15 @@ hunting and an optional luckiest/driest leaderboard.
 ## Getting started
 
 1. Install the plugin and log in. Your account registers itself.
-2. Open your collection log and click through the pages the side panel
-   lists, then press the import button once. This brings in items you
-   already had before installing.
+2. Open your collection log and click through the pages listed on the side
+   panel's **Backlog** tab, then press the import button once. This brings
+   in items you already had before installing.
 3. Your log is private until you turn on **Show my log on the website**
    in the plugin's settings. From then on anyone can look it up by name.
 4. New drops, kill counts and log pages you open sync by themselves.
+5. The panel's **My luck** tab shows your overall luck, your jackpot and
+   dry-streak drops, and what you're still hunting on each boss, with a
+   link to your full profile on the website.
 
 ## What's sent, and where
 

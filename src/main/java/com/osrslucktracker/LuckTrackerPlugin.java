@@ -1008,6 +1008,7 @@ public class LuckTrackerPlugin extends Plugin
             }
             luckResultsAccount = accountHash;
             luckResults = response.results;
+            showPanelLuck(accountHash, response);
             printLuckCheck(itemName, itemIds, title);
         }));
     }
@@ -1061,6 +1062,35 @@ public class LuckTrackerPlugin extends Plugin
                 .type(ChatMessageType.GAMEMESSAGE)
                 .runeLiteFormattedMessage(line)
                 .build());
+        }
+    }
+
+    /**
+     * Reloads the account's luck for the panel, if it's still the one
+     * logged in. Runs from any thread; the fetch callback hops to the
+     * client thread like the other fetches.
+     */
+    private void refreshPanelLuck(String accountHash, String token)
+    {
+        apiClient.fetchPlayerLuck(accountHash, token, localPlayerName, response -> clientThread.invoke(() ->
+        {
+            if (response == null || !accountHash.equals(getCurrentAccountHash()))
+            {
+                return;
+            }
+            luckResultsAccount = accountHash;
+            luckResults = response.results;
+            showPanelLuck(accountHash, response);
+        }));
+    }
+
+    /** Hands a fresh /get-player-luck response to the panel's luck summary. */
+    private void showPanelLuck(String accountHash, PlayerLuckResponse response)
+    {
+        LuckTrackerPanel p = panel;
+        if (p != null)
+        {
+            SwingUtilities.invokeLater(() -> p.showLuck(accountHash, response));
         }
     }
 
@@ -1203,6 +1233,7 @@ public class LuckTrackerPlugin extends Plugin
             }
             luckResultsAccount = accountHash;
             luckResults = response.results;
+            showPanelLuck(accountHash, response);
             for (PlayerLuckResponse.Result result : response.results)
             {
                 // The tracked row for this drop, not a backlogged one for the same item.
@@ -1294,7 +1325,11 @@ public class LuckTrackerPlugin extends Plugin
         String token = configManager.getConfiguration("lucktracker", pendingKcAccount, "installToken");
         if (token != null && !token.isEmpty())
         {
-            apiClient.updateKillCounts(token, pendingKcAccount, new HashMap<>(pendingKc));
+            String accountHash = pendingKcAccount;
+            // The backend raised its still-hunting kill counts (and their
+            // luck), so the panel reloads to show them.
+            apiClient.updateKillCounts(token, accountHash, new HashMap<>(pendingKc),
+                () -> refreshPanelLuck(accountHash, token));
         }
         pendingKc.clear();
         lastKcSendMs = System.currentTimeMillis();

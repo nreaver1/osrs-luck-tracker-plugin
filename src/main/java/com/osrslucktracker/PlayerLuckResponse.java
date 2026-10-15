@@ -15,6 +15,12 @@ class PlayerLuckResponse
 {
     List<Result> results;
 
+    // The lowest and highest rated probability (summarizePlayerLuck), for
+    // the panel's summary; null when nothing is rated yet.
+    Result mostSpooned;
+
+    Result driest;
+
     // Items still being hunted (migration 0008); null from an older backend.
     // Hides pooled and recorded pairs, so it's for display.
     List<Hunting> hunting;
@@ -59,6 +65,13 @@ class PlayerLuckResponse
         String sourceName;
 
         int kc;
+
+        // Display list only (huntingLuck: chance a fair player would have
+        // had it by now); absent from the raw hunting_rows.
+        Double probability;
+
+        @SerializedName("updated_at")
+        String updatedAt;
     }
 
     static class Result
@@ -76,6 +89,9 @@ class PlayerLuckResponse
         // "spooned", "average", "dry" or "desert"; only meaningful when
         // supported and not backfilled.
         String label;
+
+        // P, 0-1. Null (NaN on the backend) for backfilled drops; never show it then.
+        Double probability;
 
         boolean estimated;
 
