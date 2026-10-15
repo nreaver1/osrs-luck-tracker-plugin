@@ -12,10 +12,11 @@ import java.util.regex.Pattern;
 final class KillCountMessage
 {
     // Same shapes RuneLite's Chat Commands plugin accepts, matched after
-    // stripping the <col> tags the game wraps around the number.
+    // stripping the <col> tags the game wraps around the number. "count"
+    // is required so "Your reward is: 320 x Coins." isn't read as a kill.
     private static final Pattern PATTERN = Pattern.compile(
-        "^Your (?:completion count for |subdued |completed )?(.+?) "
-            + "(?:(?:kill|harvest|lap|completion|success) )?(?:count )?is: ?([0-9,]+)");
+        "^Your (?:completion count for (.+?)|(?:subdued |completed )?(.+?) "
+            + "(?:(?:kill|harvest|lap|completion|success) )?count) is: ?([0-9,]+)");
 
     // Raid loot is claimed from a chest after the completion message, so a
     // raid's context has to outlive the few seconds a boss kill gets.
@@ -40,7 +41,8 @@ final class KillCountMessage
         {
             return null;
         }
-        return new KillCountMessage(matcher.group(1), Integer.parseInt(matcher.group(2).replace(",", "")));
+        String source = matcher.group(1) != null ? matcher.group(1) : matcher.group(2);
+        return new KillCountMessage(source, Integer.parseInt(matcher.group(3).replace(",", "")));
     }
 
     boolean isRaid()

@@ -62,5 +62,17 @@ class KillCountMessageTest
     {
         assertNull(KillCountMessage.parse("New item added to your collection log: Twisted bow"));
         assertNull(KillCountMessage.parse("Fight duration: <col=ff0000>1:02</col>. Personal best: 0:58"));
+        assertNull(KillCountMessage.parse("Your reward is: <col=ff0000>320</col> x <col=ff0000>Coins</col>."));
+    }
+
+    @Test
+    void parsesSubduedAndCompletionCountForVariants()
+    {
+        assertEquals("Wintertodt",
+            KillCountMessage.parse("Your subdued Wintertodt count is: <col=ff0000>58</col>.").source);
+        KillCountMessage toa = KillCountMessage.parse(
+            "Your completion count for Tombs of Amascut is: <col=ff0000>9</col>.");
+        assertEquals("Tombs of Amascut", toa.source);
+        assertEquals(9, toa.kc);
     }
 }
