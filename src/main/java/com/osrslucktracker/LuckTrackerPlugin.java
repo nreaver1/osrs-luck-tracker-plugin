@@ -1118,7 +1118,7 @@ public class LuckTrackerPlugin extends Plugin
 
         if (lastKillSource == null || now - lastKillTimestampMs > lastKillWindowMs)
         {
-            log.info(
+            log.debug(
                 "Collection log drop '{}' had no recent boss-kill context (last kill: {}, {} ms ago) — "
                     + "skipping (likely a non-boss source this plugin doesn't track yet)",
                 itemName, lastKillSource, lastKillSource == null ? -1 : now - lastKillTimestampMs
@@ -1129,7 +1129,7 @@ public class LuckTrackerPlugin extends Plugin
         Integer kcAtDrop = bossKillCounts.get(lastKillSource);
         if (kcAtDrop == null)
         {
-            log.info("Collection log drop '{}' skipped: no kill count stored for {}", itemName, lastKillSource);
+            log.debug("Collection log drop '{}' skipped: no kill count stored for {}", itemName, lastKillSource);
             return;
         }
 
@@ -1198,7 +1198,7 @@ public class LuckTrackerPlugin extends Plugin
         long accountHash = client.getAccountHash();
         if (accountHash == -1)
         {
-            log.info("Drop for item {} skipped: no account hash (not logged in?)", itemId);
+            log.debug("Drop for item {} skipped: no account hash (not logged in?)", itemId);
             return;
         }
         String hash = Long.toHexString(accountHash);
