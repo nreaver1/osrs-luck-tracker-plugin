@@ -1,24 +1,80 @@
 # Clog Casino
 
-A RuneLite plugin that shows how spooned or dry you were for each
-collection log drop. New boss and raid drops are recorded with the kill
-count you got them at, and the Clog Casino website
-(https://osrs-luck-tracker.vercel.app) rates each item against its drop
-rate (spooned, average, dry or desert), alongside the items you're still
-hunting and an optional luckiest/driest leaderboard.
+Were you spooned or dry? Clog Casino records the kill count you got each
+boss and raid collection log item at, and rates every drop against its
+drop rate: **spooned**, **average**, **dry** or **desert**.
+
+You can see your luck in the RuneLite side panel and in chat, and, if you
+choose, on a public profile on the Clog Casino website
+(https://osrs-luck-tracker.vercel.app).
+
+## Features
+
+- **Luck for every new drop.** When a boss or raid drop enters your
+  collection log, a line in chat shows the kill count you got it at and
+  how lucky that was, for example "first obtained at 49 KC - dry".
+- **Check any slot.** Use the game's *Check* option on an item in your
+  own collection log to see the same luck line for drops the plugin
+  has recorded.
+- **Side panel.**
+  - **My luck** tab: your overall luck, your luckiest drop ("jackpot"),
+    your driest drop, and the items you're still hunting at each boss,
+    with a link to your website profile.
+  - **Backlog** tab: tools for bringing in the items you had before you
+    installed the plugin (see below).
+  - Your boss kill counts this session, above both tabs.
+- **Import your existing log.** Items you already had are brought in
+  from your collection log. The game doesn't record the kill count they
+  dropped at, so they're marked as obtained and never shown as
+  spooned or dry. Where the log page shows a kill count, the website
+  can show an optional estimate from "how many by this KC".
+- **Still hunting.** The empty slots on your boss pages become a "still
+  hunting" list showing how overdue each one is.
+- **Website profile and leaderboard (optional, off by default).** Share
+  your log on the Clog Casino website, compare yourself with friends,
+  and join the luckiest/driest players leaderboard.
 
 ## Getting started
 
 1. Install the plugin and log in. Your account registers itself.
-2. Open your collection log and click through the pages listed on the side
-   panel's **Backlog** tab, then press the import button once. This brings
-   in items you already had before installing.
-3. Your log is private until you turn on **Show my log on the website**
-   in the plugin's settings. From then on anyone can look it up by name.
-4. New drops, kill counts and log pages you open sync by themselves.
-5. The panel's **My luck** tab shows your overall luck, your jackpot and
-   dry-streak drops, and what you're still hunting on each boss, with a
-   link to your full profile on the website.
+2. Open your collection log and click through the **Bosses** and
+   **Raids** pages listed on the panel's **Backlog** tab. Each page is
+   read as you open it.
+3. Press **Import items** once. This brings in what you already had.
+4. That's it. From then on, new drops, kill counts and any log page you
+   open sync by themselves, with no more buttons to press.
+5. If you want others to see your log, turn on **Show my log on the
+   website** in the plugin settings (see below).
+
+You only need to reopen a log page if you got an item on it while the
+plugin wasn't running. If the panel lists a page under **Pages to open
+again**, it was read while still loading, so open it once more.
+
+## Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| **Show my log on the website** | Off | Lets anyone look up your name on the Clog Casino website and see your drops and luck. While off, the website says no player is logged under your name. Your drops are still recorded, so turning it on later shows everything. |
+| **Show me on the leaderboard** | Off | Lists you on the website's luckiest/driest players leaderboard. Needs *Show my log on the website* on as well. |
+
+The panel and chat lines work the same whichever way these are set.
+Settings are stored per RuneLite profile, so every account you play on
+the same profile shares them.
+
+## How luck is rated
+
+Each drop is compared with its wiki drop rate: the chance of getting the
+item as early or as late as you did.
+
+- **Spooned:** under a 10% chance of getting it this early.
+- **Average:** anywhere in between.
+- **Dry:** more than 80% of players would have had it by this KC.
+- **Desert:** more than 99% would have.
+
+Raid uniques and items with pity mechanics are estimates based on a
+typical raid (assumed points or team size), since the plugin doesn't
+read your raid points. Your **overall luck** is the average of all your
+rated drops, compared with what a player with fair luck would average.
 
 ## What's sent, and where
 
@@ -37,7 +93,7 @@ the plugin's author), over HTTPS:
 - **While you play:** kill counts from boss kill messages, batched at
   most once a minute and at logout.
 - **When you change the plugin settings:** the two visibility settings
-  below.
+  above.
 
 As with any website, the server also sees your IP address; it is used
 only for rate limiting. Nothing is sent about your bank, inventory,
@@ -46,10 +102,34 @@ above) or other players. Nobody can look up your log on the site unless
 you turn on "Show my log on the website". Disable the plugin to stop
 sending anything.
 
+## Good to know
+
+- **Only boss and raid drops are tracked.** Clue scrolls, minigames and
+  skilling pets don't print a kill count, so the plugin can't tell what
+  they came from and skips them.
+- **A drop counts if it follows a kill-count message** within 60
+  seconds, or 10 minutes after a raid, since raid loot comes from the
+  chest. Floor loot enters your log when you pick it up, so pick it up
+  promptly.
+- **Items shared between bosses** (godsword shards, Dragon pickaxe,
+  Virtus and similar) can't be imported automatically, because the log
+  shows them on every page that lists them. Add them one at a time with
+  **Add a single item** on the Backlog tab if you know which boss they
+  came from.
+- **Lost install token.** The token lives in your RuneLite profile. If
+  you lose it (for example by resetting your profile), open an issue
+  and it can be reset.
+
 Bug reports and questions:
 https://github.com/nreaver1/osrs-luck-tracker-plugin/issues
 
-## How it works
+---
+
+## For developers
+
+The rest of this README covers how the plugin works internally.
+
+### How it works
 
 1. On login, calls `/register` once per account (result cached locally),
    getting back an `install_token`.
@@ -77,7 +157,7 @@ https://github.com/nreaver1/osrs-luck-tracker-plugin/issues
    computed luck**. See "Collection log import" below for how this stays
    reliable.
 
-## Collection log import
+### Collection log import
 
 Earlier approaches to reading the whole log automatically broke when
 game updates changed things underneath them. This one avoids relying
@@ -147,32 +227,25 @@ on anything fragile, and fails closed when something does change:
 `BackfillPlanner`, `KillCountMessage` and `LogPageSnapshot` are pure
 logic with unit tests (`./gradlew test`).
 
-## Development
+### Development
 
 `./gradlew build` compiles against the real `runelite-client` and runs
 the tests. `./gradlew run` starts a RuneLite dev client with the plugin
 loaded (`LuckTrackerPluginTest`).
 
-## Configuration
+### Settings sync
 
-The plugin settings have two checkboxes:
-- **Show my log on the website** (off by default). When off, looking up
-  your name on the website says no player is logged under it, and you're
-  left off the leaderboard. Drops are still recorded, and the plugin's
-  own panel and collection log check keep working: they read your drops
-  with your install token (`POST /get-player-luck`), not by name.
-- **Show me on the leaderboard** (off by default). Lists you on the
-  website's luckiest/driest players board. Needs the first setting on.
-
-Both are sent to `/update-settings` when they change, and once for each
-account that hasn't synced them yet (per-account config key
-`syncedSettings`). They're stored per RuneLite profile, so every account
-played on that profile shares them.
+Both visibility settings are sent to `/update-settings` when they
+change, and once for each account that hasn't synced them yet
+(per-account config key `syncedSettings`). With *Show my log on the
+website* off, the plugin's own panel and collection log check keep
+working because they read your drops with your install token
+(`POST /get-player-luck`), not by name.
 
 The backend URL and publishable key are hidden config items
 (`apiBaseUrl`, `publishableKey`) that default to the live backend.
 
-## Known limitations (by design, not bugs)
+### Known limitations (by design, not bugs)
 
 - **Only tracks drops that follow a kill-count message within 60
   seconds** (10 minutes after a raid). Boss drops work well since RuneLite prints kill count on
