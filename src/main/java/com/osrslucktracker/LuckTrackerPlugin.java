@@ -25,6 +25,7 @@ import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.game.ChatIconManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
@@ -47,6 +48,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -157,9 +159,10 @@ public class LuckTrackerPlugin extends Plugin
 
     // Lifetime KC as the game prints it, which the API needs for kc_received.
     private final Map<String, Integer> bossKillCounts = new HashMap<>();
-    // Kill counts not sent to /update-kc yet, for pendingKcAccount. Client thread only.
-    private final Map<String, Integer> pendingKc = new HashMap<>();
-    private String pendingKcAccount;
+    // Kill counts not sent to /update-kc yet, for pendingKcAccount. Written on the
+    // client thread; concurrent because client shutdown reads it from another.
+    private final Map<String, Integer> pendingKc = new ConcurrentHashMap<>();
+    private volatile String pendingKcAccount;
     private long lastKcSendMs;
     // Kills seen since login, for the panel; one kill-count message is one kill.
     private final Map<String, Integer> sessionKillCounts = new HashMap<>();
@@ -256,6 +259,8 @@ public class LuckTrackerPlugin extends Plugin
     @Override
     protected void shutDown()
     {
+        // Turning the plugin off mid-session shouldn't drop the batch.
+        sendPendingKillCounts(false);
         clientToolbar.removeNavigation(navButton);
         LuckTrackerPanel p = panel;
         if (p != null)
@@ -276,6 +281,21 @@ public class LuckTrackerPlugin extends Plugin
         lastRegisterAttemptMs = 0;
         settingsSynced = null;
         lastSettingsAttemptMs = 0;
+    }
+
+    /**
+     * Closing the client skips the logout flush, so send the waiting kill
+     * counts here and have the client wait for the call (RuneLite gives
+     * shutdown tasks a few seconds before exiting).
+     */
+    @Subscribe
+    public void onClientShutdown(ClientShutdown event)
+    {
+        CompletableFuture<Void> sent = sendPendingKillCounts(false);
+        if (sent != null)
+        {
+            event.waitFor(sent);
+        }
     }
 
     @Subscribe
@@ -1318,21 +1338,33 @@ public class LuckTrackerPlugin extends Plugin
     /** Sends the queued kill counts for the account they were seen on. Client thread. */
     private void sendPendingKillCounts()
     {
+        sendPendingKillCounts(true);
+    }
+
+    /**
+     * Sends the batched kill counts, if any. refreshPanel reloads the panel's
+     * luck afterwards; the shutdown paths skip it. Returns the call's future,
+     * or null when nothing was sent.
+     */
+    private CompletableFuture<Void> sendPendingKillCounts(boolean refreshPanel)
+    {
         if (pendingKc.isEmpty() || pendingKcAccount == null)
         {
-            return;
+            return null;
         }
+        CompletableFuture<Void> sent = null;
         String token = configManager.getConfiguration("lucktracker", pendingKcAccount, "installToken");
         if (token != null && !token.isEmpty())
         {
             String accountHash = pendingKcAccount;
             // The backend raised its still-hunting kill counts (and their
             // luck), so the panel reloads to show them.
-            apiClient.updateKillCounts(token, accountHash, new HashMap<>(pendingKc),
-                () -> refreshPanelLuck(accountHash, token));
+            Runnable onSuccess = refreshPanel ? () -> refreshPanelLuck(accountHash, token) : () -> { };
+            sent = apiClient.updateKillCounts(token, accountHash, new HashMap<>(pendingKc), onSuccess);
         }
         pendingKc.clear();
         lastKcSendMs = System.currentTimeMillis();
+        return sent;
     }
 
     /** Each read page's kill count and item quantities: page title -> snapshot. */
