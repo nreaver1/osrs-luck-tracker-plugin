@@ -24,6 +24,18 @@ class LogPageSnapshotTest
     }
 
     @Test
+    void addsUpEveryModeOnTheToaPage()
+    {
+        // Labels are illustrative; every counter on the page is a mode's completions.
+        assertEquals(Integer.valueOf(26), LogPageSnapshot.parseKillCount("Tombs of Amascut", Arrays.asList(
+            "Obtained: <col=ff0000>3/17</col>",
+            "Tombs of Amascut (Entry) completions: <col=ffffff>5</col>",
+            "Tombs of Amascut completions: <col=ffffff>21</col>",
+            "Tombs of Amascut (Expert) completions: <col=ffffff>0</col>")));
+        assertNull(LogPageSnapshot.parseKillCount("Tombs of Amascut", Collections.singletonList("Obtained: 3/17")));
+    }
+
+    @Test
     void ignoresTheObtainedLine()
     {
         assertNull(LogPageSnapshot.parseKillCount("Test page", Collections.singletonList("Obtained: <col=ff0000>12/24</col>")));

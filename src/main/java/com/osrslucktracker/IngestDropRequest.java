@@ -22,7 +22,11 @@ class IngestDropRequest
     @SerializedName("current_kc")
     final int currentKc;
 
-    IngestDropRequest(String installToken, String accountHash, int itemId, String sourceName, int kcReceived, int currentKc)
+    /** A raid drop's completion, or null. The backend then stores the drop at the raid's total count. */
+    final RaidRecord raid;
+
+    IngestDropRequest(String installToken, String accountHash, int itemId, String sourceName, int kcReceived, int currentKc,
+        RaidRecord raid)
     {
         this.installToken = installToken;
         this.accountHash = accountHash;
@@ -30,5 +34,6 @@ class IngestDropRequest
         this.sourceName = sourceName;
         this.kcReceived = kcReceived;
         this.currentKc = currentKc;
+        this.raid = raid;
     }
 }

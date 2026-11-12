@@ -14,9 +14,11 @@ import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ScriptPostFired;
 import net.runelite.api.events.ScriptPreFired;
+import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.VarClientID;
+import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
@@ -37,6 +39,7 @@ import net.runelite.client.util.Text;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
 import java.awt.image.BufferedImage;
+import java.time.Instant;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -176,6 +179,24 @@ public class LuckTrackerPlugin extends Plugin
     private long lastKillTimestampMs = 0;
     private long lastKillWindowMs = KILL_CONTEXT_WINDOW_MS;
 
+    // Tombs of Amascut completions (ToaRaidTracker). Once the completion
+    // message and the points varp have both arrived, the raid is recorded a
+    // few ticks later, so the sarcophagus and chest varbits have settled.
+    // Its drops then carry the record. Client thread only.
+    private static final int TOA_RECORD_DELAY_TICKS = 3;
+    private static final int[] TOA_VAULT_CHESTS = {
+        VarbitID.TOA_VAULT_CHEST_0, VarbitID.TOA_VAULT_CHEST_1, VarbitID.TOA_VAULT_CHEST_2, VarbitID.TOA_VAULT_CHEST_3,
+        VarbitID.TOA_VAULT_CHEST_4, VarbitID.TOA_VAULT_CHEST_5, VarbitID.TOA_VAULT_CHEST_6, VarbitID.TOA_VAULT_CHEST_7,
+    };
+    private static final int[] TOA_PARTY_SLOTS = {
+        VarbitID.TOA_CLIENT_P0, VarbitID.TOA_CLIENT_P1, VarbitID.TOA_CLIENT_P2, VarbitID.TOA_CLIENT_P3,
+        VarbitID.TOA_CLIENT_P4, VarbitID.TOA_CLIENT_P5, VarbitID.TOA_CLIENT_P6, VarbitID.TOA_CLIENT_P7,
+    };
+    private final ToaRaidTracker toaTracker = new ToaRaidTracker();
+    private int toaRecordInTicks = -1;
+    private RaidRecord lastRaid = null;
+    private long lastRaidAtMs = 0;
+
     // A player with both the chat and popup notification on gets each
     // drop twice; the second one within DUPLICATE_DROP_MS is ignored.
     private static final long DUPLICATE_DROP_MS = 10_000;
@@ -268,6 +289,9 @@ public class LuckTrackerPlugin extends Plugin
         luckResults = null;
         luckResultsAccount = null;
         lastKillSource = null;
+        toaTracker.reset();
+        toaRecordInTicks = -1;
+        lastRaid = null;
         obtainedByPage.clear();
         snapshotByPage.clear();
         scannedAccountHash = null;
@@ -321,6 +345,7 @@ public class LuckTrackerPlugin extends Plugin
         }
         announceAccount();
         syncSettings();
+        tickToaRecord();
         if (!pendingKc.isEmpty() && System.currentTimeMillis() - lastKcSendMs >= KC_SEND_INTERVAL_MS)
         {
             sendPendingKillCounts();
@@ -918,6 +943,76 @@ public class LuckTrackerPlugin extends Plugin
     }
 
     @Subscribe
+    public void onVarbitChanged(VarbitChanged event)
+    {
+        // Sent once, at the end of the raid.
+        if (event.getVarpId() == VarPlayerID.TOA_PERSONAL_CONTRIBUTION)
+        {
+            toaTracker.onPoints(event.getValue());
+        }
+    }
+
+    private void tickToaRecord()
+    {
+        if (!toaTracker.ready(System.currentTimeMillis()))
+        {
+            toaRecordInTicks = -1;
+            return;
+        }
+        if (toaRecordInTicks < 0)
+        {
+            toaRecordInTicks = TOA_RECORD_DELAY_TICKS;
+        }
+        else if (--toaRecordInTicks <= 0)
+        {
+            recordToaRaid();
+        }
+    }
+
+    /** Reads the finished raid off the client and sends it to /record-raid. */
+    private void recordToaRaid()
+    {
+        toaRecordInTicks = -1;
+        Map<String, Integer> counters = new HashMap<>();
+        counters.put(ToaRaidTracker.ENTRY, client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_TOMBSOFAMASCUT_ENTRY));
+        counters.put(ToaRaidTracker.NORMAL, client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_TOMBSOFAMASCUT));
+        counters.put(ToaRaidTracker.EXPERT, client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_TOMBSOFAMASCUT_EXPERT));
+        int teamSize = 0;
+        for (int slot : TOA_PARTY_SLOTS)
+        {
+            teamSize += Math.min(client.getVarbitValue(slot), 1);
+        }
+        int[] chests = new int[TOA_VAULT_CHESTS.length];
+        for (int i = 0; i < chests.length; i++)
+        {
+            chests[i] = client.getVarbitValue(TOA_VAULT_CHESTS[i]);
+        }
+        int raidLevel = client.getVarbitValue(VarbitID.TOA_CLIENT_RAID_LEVEL);
+        int sarcophagus = client.getVarbitValue(VarbitID.TOA_VAULT_SARCOPHAGUS);
+
+        RaidRecord raid = toaTracker.build(counters, raidLevel, teamSize, sarcophagus, chests, Instant.now());
+        lastRaid = raid;
+        lastRaidAtMs = System.currentTimeMillis();
+        log.info("Tombs of Amascut {} completion: counts {}, level {}, team {}, points {}, purple {} (mine {})",
+            raid.mode, raid.modeCounts, raidLevel, raid.teamSize, raid.personalPoints, raid.purple, raid.purpleMine);
+
+        long accountHash = client.getAccountHash();
+        if (accountHash == -1)
+        {
+            return;
+        }
+        String hash = Long.toHexString(accountHash);
+        String token = configManager.getConfiguration("lucktracker", hash, "installToken");
+        if (token == null || token.isEmpty())
+        {
+            // The raid's drops still carry it once the account has a token.
+            ensureRegistered();
+            return;
+        }
+        apiClient.recordRaid(token, hash, raid);
+    }
+
+    @Subscribe
     public void onChatMessage(ChatMessage event)
     {
         if (!CollectionLogMessage.isGameMessageType(event.getType()))
@@ -937,6 +1032,7 @@ public class LuckTrackerPlugin extends Plugin
             lastKillSource = killCount.source;
             lastKillTimestampMs = System.currentTimeMillis();
             lastKillWindowMs = killCount.isRaid() ? RAID_CONTEXT_WINDOW_MS : KILL_CONTEXT_WINDOW_MS;
+            toaTracker.onCompletionMessage(killCount.source, killCount.kc, lastKillTimestampMs);
             return;
         }
 
@@ -1144,7 +1240,7 @@ public class LuckTrackerPlugin extends Plugin
             log.warn("Could not resolve item id for '{}' — skipping submission", itemName);
             return;
         }
-        submitDrop(itemId, sourceName, kcAtDrop);
+        submitDrop(itemId, sourceName, kcAtDrop, raidFor(sourceName, now));
     }
 
     /**
@@ -1193,8 +1289,34 @@ public class LuckTrackerPlugin extends Plugin
             .orElse(null);
     }
 
-    private void submitDrop(int itemId, String sourceName, int kcReceived)
+    /**
+     * The recorded completion a raid drop came from, or null (not a raid, or
+     * the raid's points never arrived; the drop is then sent with its mode's
+     * count alone). Records a raid that's ready but still waiting out its delay.
+     */
+    private RaidRecord raidFor(String sourceName, long now)
     {
+        String mode = ToaRaidTracker.modeFor(sourceName);
+        if (mode == null)
+        {
+            return null;
+        }
+        if (toaTracker.ready(now) && mode.equals(toaTracker.pendingMode()))
+        {
+            recordToaRaid();
+        }
+        if (lastRaid == null || !mode.equals(lastRaid.mode) || now - lastRaidAtMs > RAID_CONTEXT_WINDOW_MS)
+        {
+            log.info("{} drop has no recorded raid, so it's sent with the mode's count only", sourceName);
+            return null;
+        }
+        return lastRaid;
+    }
+
+    private void submitDrop(int itemId, String sourceName, int kcAtDrop, RaidRecord raid)
+    {
+        // A raid drop's KC is every mode's completions added up, like its log page.
+        int kcReceived = raid != null ? raid.totalCount() : kcAtDrop;
         long accountHash = client.getAccountHash();
         if (accountHash == -1)
         {
@@ -1210,9 +1332,9 @@ public class LuckTrackerPlugin extends Plugin
             return;
         }
 
-        Integer currentKc = bossKillCounts.get(sourceName);
+        Integer currentKc = raid != null ? Integer.valueOf(kcReceived) : bossKillCounts.get(sourceName);
         String itemName = client.getItemDefinition(itemId).getName();
-        apiClient.ingestDrop(token, hash, itemId, sourceName, kcReceived, currentKc != null ? currentKc : kcReceived,
+        apiClient.ingestDrop(token, hash, itemId, sourceName, kcReceived, currentKc != null ? currentKc : kcReceived, raid,
             () -> announceDropLuck(hash, token, itemId, itemName, kcReceived));
     }
 

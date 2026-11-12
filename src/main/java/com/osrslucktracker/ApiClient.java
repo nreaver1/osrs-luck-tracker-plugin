@@ -99,7 +99,7 @@ class ApiClient
     }
 
     void ingestDrop(String installToken, String accountHash, int itemId, String sourceName, int kcReceived, int currentKc,
-        Runnable onLogged)
+        RaidRecord raid, Runnable onLogged)
     {
         if (config.apiBaseUrl().isEmpty())
         {
@@ -107,7 +107,7 @@ class ApiClient
             return;
         }
 
-        IngestDropRequest body = new IngestDropRequest(installToken, accountHash, itemId, sourceName, kcReceived, currentKc);
+        IngestDropRequest body = new IngestDropRequest(installToken, accountHash, itemId, sourceName, kcReceived, currentKc, raid);
         Request request = new Request.Builder()
             .url(config.apiBaseUrl() + "/ingest-drop")
             .header("apikey", config.publishableKey())
@@ -135,6 +135,48 @@ class ApiClient
                     else
                     {
                         log.warn("Ingest-drop returned HTTP {} for item {}", r.code(), itemId);
+                    }
+                }
+            }
+        });
+    }
+
+    /** Records one raid completion (/record-raid). Failures are logged; the raid's drops still carry it. */
+    void recordRaid(String installToken, String accountHash, RaidRecord raid)
+    {
+        if (config.apiBaseUrl().isEmpty())
+        {
+            log.debug("API base URL not configured, skipping record-raid");
+            return;
+        }
+
+        RecordRaidRequest body = new RecordRaidRequest(installToken, accountHash, raid);
+        Request request = new Request.Builder()
+            .url(config.apiBaseUrl() + "/record-raid")
+            .header("apikey", config.publishableKey())
+            .post(RequestBody.create(JSON, gson.toJson(body)))
+            .build();
+
+        httpClient.newCall(request).enqueue(new Callback()
+        {
+            @Override
+            public void onFailure(Call call, IOException e)
+            {
+                log.warn("Record-raid call failed for {} {} {}", raid.raid, raid.mode, raid.modeCounts, e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response)
+            {
+                try (Response r = response)
+                {
+                    if (r.isSuccessful())
+                    {
+                        log.debug("Recorded {} {} completion {} (HTTP {})", raid.raid, raid.mode, raid.modeCounts, r.code());
+                    }
+                    else
+                    {
+                        log.warn("Record-raid returned HTTP {} for {} {} {}", r.code(), raid.raid, raid.mode, raid.modeCounts);
                     }
                 }
             }

@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -87,10 +88,15 @@ final class LogPageSnapshot
     private static final Map<String, String> ROLL_COUNTERS = Collections.singletonMap(
         "Tempoross", "Reward permits claimed");
 
+    // Raid pages whose header counts each mode separately, while the backend
+    // rates the page over every mode's completions together (its
+    // _shared/raids.ts), so the page's count is their sum.
+    private static final Set<String> SUMMED_COUNTERS = Collections.singleton("Tombs of Amascut");
+
     /**
      * The page's roll count from its header lines (title excluded): the
-     * counter {@link #ROLL_COUNTERS} names for the page, or else its only
-     * count. Null when that counter is missing, or when a page not listed
+     * counters added up on a {@link #SUMMED_COUNTERS} page, the counter
+     * {@link #ROLL_COUNTERS} names for the page, or else its only count. Null when that counter is missing, or when a page not listed
      * there has several counters (Dagannoth Kings, The Gauntlet's normal
      * and corrupted) or none, since then it can't say which count an item
      * came from.
@@ -123,6 +129,10 @@ final class LogPageSnapshot
             }
         }
 
+        if (SUMMED_COUNTERS.contains(page))
+        {
+            return counts.isEmpty() ? null : counts.values().stream().mapToInt(Integer::intValue).sum();
+        }
         String rollCounter = ROLL_COUNTERS.get(page);
         if (rollCounter != null)
         {
