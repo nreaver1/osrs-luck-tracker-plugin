@@ -36,6 +36,19 @@ class LogPageSnapshotTest
     }
 
     @Test
+    void addsUpEveryModeOnTheCoxAndTobPages()
+    {
+        assertEquals(Integer.valueOf(64), LogPageSnapshot.parseKillCount("Chambers of Xeric", Arrays.asList(
+            "Obtained: 4/18",
+            "Chambers of Xeric completions: 51",
+            "Chambers of Xeric (CM) completions: 13")));
+        assertEquals(Integer.valueOf(80), LogPageSnapshot.parseKillCount("Theatre of Blood", Arrays.asList(
+            "Theatre of Blood (Entry) completions: 73",
+            "Theatre of Blood completions: 5",
+            "Theatre of Blood (Hard) completions: 2")));
+    }
+
+    @Test
     void ignoresTheObtainedLine()
     {
         assertNull(LogPageSnapshot.parseKillCount("Test page", Collections.singletonList("Obtained: <col=ff0000>12/24</col>")));

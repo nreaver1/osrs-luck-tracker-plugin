@@ -2,8 +2,10 @@ package com.osrslucktracker;
 
 import net.runelite.client.util.Text;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -91,7 +93,8 @@ final class LogPageSnapshot
     // Raid pages whose header counts each mode separately, while the backend
     // rates the page over every mode's completions together (its
     // _shared/raids.ts), so the page's count is their sum.
-    private static final Set<String> SUMMED_COUNTERS = Collections.singleton("Tombs of Amascut");
+    private static final Set<String> SUMMED_COUNTERS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+        "Chambers of Xeric", "Theatre of Blood", "Tombs of Amascut")));
 
     /**
      * The page's roll count from its header lines (title excluded): the

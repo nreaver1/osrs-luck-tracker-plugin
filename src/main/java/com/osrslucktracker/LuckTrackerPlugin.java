@@ -194,6 +194,22 @@ public class LuckTrackerPlugin extends Plugin
     };
     private final ToaRaidTracker toaTracker = new ToaRaidTracker();
     private int toaRecordInTicks = -1;
+
+    // Chambers of Xeric and Theatre of Blood completions
+    // (RaidCompletionTracker), read off the client a couple of ticks after
+    // the completion message, while the raid's varbits still hold its points
+    // and party.
+    private static final int RAID_RECORD_DELAY_TICKS = 2;
+    private static final int[] TOB_PARTY_SLOTS = {
+        VarbitID.TOB_CLIENT_P0, VarbitID.TOB_CLIENT_P1, VarbitID.TOB_CLIENT_P2, VarbitID.TOB_CLIENT_P3,
+        VarbitID.TOB_CLIENT_P4,
+    };
+    private static final int[] TOB_CHESTS = {
+        VarbitID.TOB_TREASUREROOM_CHEST_0, VarbitID.TOB_TREASUREROOM_CHEST_1, VarbitID.TOB_TREASUREROOM_CHEST_2,
+        VarbitID.TOB_TREASUREROOM_CHEST_3, VarbitID.TOB_TREASUREROOM_CHEST_4,
+    };
+    private final RaidCompletionTracker raidTracker = new RaidCompletionTracker();
+    private int raidRecordInTicks = -1;
     private RaidRecord lastRaid = null;
     private long lastRaidAtMs = 0;
 
@@ -291,6 +307,8 @@ public class LuckTrackerPlugin extends Plugin
         lastKillSource = null;
         toaTracker.reset();
         toaRecordInTicks = -1;
+        raidTracker.reset();
+        raidRecordInTicks = -1;
         lastRaid = null;
         obtainedByPage.clear();
         snapshotByPage.clear();
@@ -346,6 +364,7 @@ public class LuckTrackerPlugin extends Plugin
         announceAccount();
         syncSettings();
         tickToaRecord();
+        tickRaidRecord();
         if (!pendingKc.isEmpty() && System.currentTimeMillis() - lastKcSendMs >= KC_SEND_INTERVAL_MS)
         {
             sendPendingKillCounts();
@@ -991,10 +1010,72 @@ public class LuckTrackerPlugin extends Plugin
         int sarcophagus = client.getVarbitValue(VarbitID.TOA_VAULT_SARCOPHAGUS);
 
         RaidRecord raid = toaTracker.build(counters, raidLevel, teamSize, sarcophagus, chests, Instant.now());
-        lastRaid = raid;
-        lastRaidAtMs = System.currentTimeMillis();
         log.info("Tombs of Amascut {} completion: counts {}, level {}, team {}, points {}, purple {} (mine {})",
             raid.mode, raid.modeCounts, raidLevel, raid.teamSize, raid.personalPoints, raid.purple, raid.purpleMine);
+        sendRaid(raid);
+    }
+
+    private void tickRaidRecord()
+    {
+        if (!raidTracker.pending(System.currentTimeMillis()))
+        {
+            raidRecordInTicks = -1;
+            return;
+        }
+        if (raidRecordInTicks < 0)
+        {
+            raidRecordInTicks = RAID_RECORD_DELAY_TICKS;
+        }
+        else if (--raidRecordInTicks <= 0)
+        {
+            recordCoxOrTobRaid();
+        }
+    }
+
+    /** Reads a finished CoX or ToB raid off the client and sends it to /record-raid. */
+    private void recordCoxOrTobRaid()
+    {
+        raidRecordInTicks = -1;
+        Map<String, Integer> counters = new HashMap<>();
+        RaidRecord raid;
+        if (RaidCompletionTracker.COX.equals(raidTracker.pendingRaid()))
+        {
+            counters.put("normal", client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_XERICCHAMBERS));
+            counters.put("challenge", client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_XERICCHAMBERS_CHALLENGE));
+            raid = raidTracker.buildCox(counters,
+                client.getVarbitValue(VarbitID.RAIDS_CLIENT_PARTYSIZE),
+                client.getVarpValue(VarPlayerID.RAIDS_PLAYERSCORE),
+                client.getVarbitValue(VarbitID.RAIDS_CLIENT_PARTYSCORE),
+                client.getVarbitValue(VarbitID.RAIDS_CLIENT_REWARDINDICATOR),
+                Instant.now());
+        }
+        else
+        {
+            counters.put("entry", client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_THEATREOFBLOOD_STORY));
+            counters.put("normal", client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_THEATREOFBLOOD));
+            counters.put("hard", client.getVarpValue(VarPlayerID.TOTAL_COMPLETED_THEATREOFBLOOD_HARD));
+            int[] slots = new int[TOB_PARTY_SLOTS.length];
+            for (int i = 0; i < slots.length; i++)
+            {
+                slots[i] = client.getVarbitValue(TOB_PARTY_SLOTS[i]);
+            }
+            int[] chests = new int[TOB_CHESTS.length];
+            for (int i = 0; i < chests.length; i++)
+            {
+                chests[i] = client.getVarbitValue(TOB_CHESTS[i]);
+            }
+            raid = raidTracker.buildTob(counters, slots, chests, Instant.now());
+        }
+        log.info("{} {} completion: counts {}, team {}, points {}, details {}",
+            raid.raid, raid.mode, raid.modeCounts, raid.teamSize, raid.personalPoints, raid.details);
+        sendRaid(raid);
+    }
+
+    /** Remembers a completion for the raid's drops and sends it to /record-raid. */
+    private void sendRaid(RaidRecord raid)
+    {
+        lastRaid = raid;
+        lastRaidAtMs = System.currentTimeMillis();
 
         long accountHash = client.getAccountHash();
         if (accountHash == -1)
@@ -1033,6 +1114,7 @@ public class LuckTrackerPlugin extends Plugin
             lastKillTimestampMs = System.currentTimeMillis();
             lastKillWindowMs = killCount.isRaid() ? RAID_CONTEXT_WINDOW_MS : KILL_CONTEXT_WINDOW_MS;
             toaTracker.onCompletionMessage(killCount.source, killCount.kc, lastKillTimestampMs);
+            raidTracker.onCompletionMessage(killCount.source, killCount.kc, lastKillTimestampMs);
             return;
         }
 
@@ -1296,16 +1378,33 @@ public class LuckTrackerPlugin extends Plugin
      */
     private RaidRecord raidFor(String sourceName, long now)
     {
+        String raidPage;
         String mode = ToaRaidTracker.modeFor(sourceName);
-        if (mode == null)
+        String[] other = RaidCompletionTracker.raidAndMode(sourceName);
+        if (mode != null)
+        {
+            raidPage = ToaRaidTracker.RAID;
+            if (toaTracker.ready(now) && mode.equals(toaTracker.pendingMode()))
+            {
+                recordToaRaid();
+            }
+        }
+        else if (other != null)
+        {
+            raidPage = other[0];
+            mode = other[1];
+            if (raidTracker.pending(now) && raidPage.equals(raidTracker.pendingRaid())
+                && mode.equals(raidTracker.pendingMode()))
+            {
+                recordCoxOrTobRaid();
+            }
+        }
+        else
         {
             return null;
         }
-        if (toaTracker.ready(now) && mode.equals(toaTracker.pendingMode()))
-        {
-            recordToaRaid();
-        }
-        if (lastRaid == null || !mode.equals(lastRaid.mode) || now - lastRaidAtMs > RAID_CONTEXT_WINDOW_MS)
+        if (lastRaid == null || !raidPage.equals(lastRaid.raid) || !mode.equals(lastRaid.mode)
+            || now - lastRaidAtMs > RAID_CONTEXT_WINDOW_MS)
         {
             log.info("{} drop has no recorded raid, so it's sent with the mode's count only", sourceName);
             return null;
