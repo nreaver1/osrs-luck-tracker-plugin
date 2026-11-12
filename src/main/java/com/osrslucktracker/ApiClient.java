@@ -17,6 +17,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -458,12 +459,16 @@ class ApiClient
      * Kill counts seen in chat since the last send, for /update-kc. Fire and
      * forget: the next batch or the next log read catches up after a failure.
      * onSuccess runs (on OkHttp's thread) once the backend has taken them.
+     * The returned future completes when the call finishes either way, so
+     * client shutdown can wait for it.
      */
-    void updateKillCounts(String installToken, String accountHash, Map<String, Integer> counts, Runnable onSuccess)
+    CompletableFuture<Void> updateKillCounts(String installToken, String accountHash, Map<String, Integer> counts, Runnable onSuccess)
     {
+        CompletableFuture<Void> done = new CompletableFuture<>();
         if (config.apiBaseUrl().isEmpty() || counts.isEmpty())
         {
-            return;
+            done.complete(null);
+            return done;
         }
         List<UpdateKcRequest.Count> list = new ArrayList<>();
         counts.forEach((source, kc) -> list.add(new UpdateKcRequest.Count(source, kc)));
@@ -479,6 +484,7 @@ class ApiClient
             public void onFailure(Call call, IOException e)
             {
                 log.debug("Update-kc call failed ({} counts)", list.size(), e);
+                done.complete(null);
             }
 
             @Override
@@ -492,9 +498,14 @@ class ApiClient
                         return;
                     }
                 }
+                finally
+                {
+                    done.complete(null);
+                }
                 onSuccess.run();
             }
         });
+        return done;
     }
 
     void syncHunting(String installToken, String accountHash, List<SyncHuntingRequest.Item> hunting,
