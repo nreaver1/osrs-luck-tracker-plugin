@@ -8,6 +8,8 @@ You can see your luck in the RuneLite side panel and in chat, and, if you
 choose, on a public profile on the Clog Casino website
 (https://osrs-luck-tracker.vercel.app).
 
+![The Clog Casino side panel: overall luck, the luckiest and driest drops, and the items still being hunted at each boss](https://raw.githubusercontent.com/nreaver1/osrs-luck-tracker-plugin/master/docs/side-panel.png)
+
 ## Features
 
 - **Luck for every new drop.** When a boss or raid drop enters your
