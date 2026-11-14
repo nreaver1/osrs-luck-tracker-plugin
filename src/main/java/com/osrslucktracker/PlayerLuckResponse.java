@@ -102,6 +102,11 @@ class PlayerLuckResponse
         // Backfilled flat-rate items with a KC snapshot only (SnapshotLuck).
         Snapshot snapshot;
 
+        // Drops on pages that count several modes (The Gauntlet and
+        // Corrupted Gauntlet), when another mode's kills are known: each
+        // mode's kills at the drop. kcReceived is only the drop's own mode's.
+        List<Mode> modes;
+
         // Backfilled rows only, in the token-checked response: whether a
         // snapshot is stored, even when none is shown (pooled pages hide
         // theirs). Null from a backend older than this field.
@@ -113,6 +118,18 @@ class PlayerLuckResponse
         {
             return backfilled && (snapshotStored != null ? !snapshotStored : snapshot == null);
         }
+    }
+
+    /** One mode's kills, as HuntingMode in _shared/types.ts. */
+    static class Mode
+    {
+        @SerializedName("source_name")
+        String sourceName;
+
+        // As the kill-count message names it ("Corrupted Gauntlet").
+        String name;
+
+        int kc;
     }
 
     static class Snapshot

@@ -5,6 +5,7 @@ import net.runelite.client.util.Text;
 
 import java.awt.Color;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -105,13 +106,47 @@ final class LuckCheckMessage
         String kc = result.kcReceived + " KC";
         if (!result.supported || result.probability == null || !Double.isFinite(result.probability))
         {
-            return message.append("first obtained at " + kc + from + " (no luck rating for this drop).").build();
+            message.append("first obtained at " + kc + from + " (no luck rating for this drop)");
         }
-        LuckSummary.Tier tier = LuckSummary.tier(result.probability);
-        Color color = toneColor(tier.tone, palette);
-        message.append("first obtained at ").append(color, kc).append(from + " - ").append(color, tier.text);
-        String pct = chatPct(result.probability);
-        return message.append(result.estimated ? " (" + pct + ", estimated)." : " (" + pct + ").").build();
+        else
+        {
+            LuckSummary.Tier tier = LuckSummary.tier(result.probability);
+            Color color = toneColor(tier.tone, palette);
+            message.append("first obtained at ").append(color, kc).append(from + " - ").append(color, tier.text);
+            String pct = chatPct(result.probability);
+            message.append(result.estimated ? " (" + pct + ", estimated)" : " (" + pct + ")");
+        }
+        if (isFirstKill(result))
+        {
+            // Said even without a luck rating: it's a fact, not an estimate.
+            message.append(" - ").append(palette.spooned, "first kill!");
+            return message.build();
+        }
+        return message.append(".").build();
+    }
+
+    /**
+     * A tracked drop on the player's very first kill of its source, as
+     * isFirstKill in lib/first-kill.ts. kcReceived is only the drop's own
+     * mode's count on multi-mode pages, so another mode's kills rule it out.
+     */
+    static boolean isFirstKill(PlayerLuckResponse.Result result)
+    {
+        if (result.backfilled || result.kcReceived == null || result.kcReceived != 1)
+        {
+            return false;
+        }
+        if (result.modes != null)
+        {
+            for (PlayerLuckResponse.Mode mode : result.modes)
+            {
+                if (mode.kc > 0 && !Objects.equals(mode.sourceName, result.sourceName))
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     /**

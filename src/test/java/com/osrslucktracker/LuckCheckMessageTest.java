@@ -114,6 +114,47 @@ class LuckCheckMessageTest
         assertTrue(line.contains("<col=b00000>1 by 1,100 KC"), line);
     }
 
+    @Test
+    void callsOutADropOnTheFirstKill()
+    {
+        String line = format(result(1, 0.05, "spooned", true, false, false), false, -1);
+        assertEquals("Soiled page: first obtained at 1 KC - JACKPOT (5%) - first kill!",
+            Text.removeTags(line));
+        assertTrue(line.contains("<col=006000>first kill!"), line);
+
+        // A fact, not a rating, so unrated drops get it too.
+        assertEquals("Soiled page: first obtained at 1 KC (no luck rating for this drop) - first kill!",
+            Text.removeTags(format(result(1, null, "average", false, false, false), false, -1)));
+
+        assertEquals("Soiled page: first obtained at 2 KC - JACKPOT (2%).",
+            Text.removeTags(format(result(2, 0.02, "spooned", true, false, false), false, -1)));
+    }
+
+    @Test
+    void anotherModesKillsRuleOutAFirstKill()
+    {
+        PlayerLuckResponse.Result r = result(1, 0.3, "average", true, false, false);
+        r.sourceName = "Corrupted Gauntlet";
+        r.modes = new java.util.ArrayList<>();
+        r.modes.add(mode("Corrupted Gauntlet", 1));
+        r.modes.add(mode("The Gauntlet", 400));
+        assertFalse(LuckCheckMessage.isFirstKill(r));
+
+        r.modes.get(1).kc = 0;
+        assertTrue(LuckCheckMessage.isFirstKill(r));
+
+        assertFalse(LuckCheckMessage.isFirstKill(result(null, null, "average", true, false, true)));
+    }
+
+    private static PlayerLuckResponse.Mode mode(String source, int kc)
+    {
+        PlayerLuckResponse.Mode m = new PlayerLuckResponse.Mode();
+        m.sourceName = source;
+        m.name = source;
+        m.kc = kc;
+        return m;
+    }
+
     /** On the opaque chatbox, the default look. */
     private static String format(PlayerLuckResponse.Result result, boolean includeSource, int iconIndex)
     {

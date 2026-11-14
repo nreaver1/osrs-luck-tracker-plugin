@@ -15,6 +15,7 @@ choose, on a public profile on the Clog Casino website
 - **Luck for every new drop.** When a boss or raid drop enters your
   collection log, a line in chat shows the kill count you got it at and
   how lucky that was, for example "first obtained at 49 KC - dry streak (87%)".
+  A drop on your very first kill of a boss also says "first kill!".
 - **Check any slot.** Use the game's *Check* option on an item in your
   own collection log to see the same luck line for drops the plugin
   has recorded.
