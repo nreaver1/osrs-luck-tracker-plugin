@@ -2,7 +2,7 @@
 
 Were you spooned or dry? Clog Casino records the kill count you got each
 boss and raid collection log item at, and rates every drop against its
-drop rate: **spooned**, **average**, **dry** or **desert**.
+drop rate, from **MEGA JACKPOT** to **desert**.
 
 You can see your luck in the RuneLite side panel and in chat, and, if you
 choose, on a public profile on the Clog Casino website
@@ -14,7 +14,7 @@ choose, on a public profile on the Clog Casino website
 
 - **Luck for every new drop.** When a boss or raid drop enters your
   collection log, a line in chat shows the kill count you got it at and
-  how lucky that was, for example "first obtained at 49 KC - dry".
+  how lucky that was, for example "first obtained at 49 KC - dry streak (87%)".
 - **Check any slot.** Use the game's *Check* option on an item in your
   own collection log to see the same luck line for drops the plugin
   has recorded.
@@ -66,12 +66,22 @@ the same profile shares them.
 ## How luck is rated
 
 Each drop is compared with its wiki drop rate: the chance of getting the
-item as early or as late as you did.
+item as early or as late as you did. The percentage is the share of
+players who would have had it by your KC, so low is lucky. Chat, the
+side panel and the website all use the same tiers:
 
-- **Spooned:** under a 10% chance of getting it this early.
-- **Average:** anywhere in between.
-- **Dry:** more than 80% of players would have had it by this KC.
-- **Desert:** more than 99% would have.
+| Tier | Share of players with it by your KC |
+|---|---|
+| **MEGA JACKPOT** | under 1% |
+| **JACKPOT** | 1–10% |
+| **pretty spooned** | 10–25% |
+| **a little spooned** | 25–42% |
+| **even money** | 42–58% |
+| **a little unlucky** | 58–70% |
+| **pretty unlucky** | 70–80% |
+| **dry streak** | 80–95% |
+| **bone dry** | 95–99% |
+| **desert** | over 99% |
 
 Raid uniques and items with pity mechanics are estimates based on a
 typical raid (assumed points or team size), since the plugin doesn't
@@ -146,7 +156,7 @@ The rest of this README covers how the plugin works internally.
    item ID and calls `/ingest-drop` with the item, source, and KC at the
    time. Once it's recorded, the plugin adds the same luck line to chat
    that checking the slot in the collection log would ("first obtained
-   at 49 KC - dry"). Names are matched against the collection log's own items first,
+   at 49 KC - dry streak (87%)"). Names are matched against the collection log's own items first,
    because `itemManager.search()` only knows tradeable items.
 4. Imports items the player already had before installing the plugin.
    The player opens their collection log in-game and clicks through the

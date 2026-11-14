@@ -12,8 +12,8 @@ import java.util.regex.Pattern;
  * The game message printed when a player checks an item in their
  * collection log ("You have received 4x Soiled page."), and the line the
  * plugin adds under it with that drop's recorded KC and luck, e.g.
- * "(icon) Soiled page: first obtained at 49 KC - dry." with the KC and
- * label in the luck color. The colors follow the chatbox: dark ones on
+ * "(icon) Soiled page: first obtained at 49 KC - dry streak (87%)." with
+ * the KC and tier in the luck color. The colors follow the chatbox: dark ones on
  * the opaque parchment box, light ones on the transparent box.
  */
 final class LuckCheckMessage
@@ -66,8 +66,10 @@ final class LuckCheckMessage
     /**
      * The chat line for one recorded drop, or null if there's nothing to
      * say. Backfilled drops have no KC, and drops without a supported
-     * distribution have no luck label; neither is ever given one. A
+     * distribution have no luck rating; neither is ever given one. A
      * backfilled drop with a KC snapshot shows that instead, as an estimate.
+     * The rating is the website's tier for the probability (LuckSummary.tier,
+     * as lib/luck-tier.ts), followed by the probability as a percentage.
      */
     static String format(PlayerLuckResponse.Result result, String itemName, boolean includeSource, int iconIndex,
         Palette palette)
@@ -80,15 +82,16 @@ final class LuckCheckMessage
         message.append(itemName + ": ");
         String from = includeSource ? " from " + result.sourceName : "";
 
-        if (result.backfilled && result.snapshot != null && labelText(result.snapshot.label) != null)
+        PlayerLuckResponse.Snapshot snap = result.snapshot;
+        if (result.backfilled && snap != null && snap.label != null && Double.isFinite(snap.probability))
         {
             // Rates the count on the log page at import, not a drop.
-            PlayerLuckResponse.Snapshot snap = result.snapshot;
-            Color color = labelColor(snap.label, palette);
+            LuckSummary.Tier tier = LuckSummary.tier(snap.probability);
+            Color color = toneColor(tier.tone, palette);
             return message.append("logged before tracking" + from + ", ")
                 .append(color, String.format(Locale.ROOT, "%,d by %,d KC", snap.quantity, snap.kc))
-                .append(" - ").append(color, labelText(snap.label))
-                .append(" (estimated).").build();
+                .append(" - ").append(color, tier.text)
+                .append(" (" + LuckSummary.formatPct(snap.probability) + ", estimated).").build();
         }
         if (result.backfilled)
         {
@@ -100,48 +103,26 @@ final class LuckCheckMessage
         }
 
         String kc = result.kcReceived + " KC";
-        String labelText = result.supported ? labelText(result.label) : null;
-        if (labelText == null)
+        if (!result.supported || result.probability == null || !Double.isFinite(result.probability))
         {
             return message.append("first obtained at " + kc + from + " (no luck rating for this drop).").build();
         }
-        Color color = labelColor(result.label, palette);
-        message.append("first obtained at ").append(color, kc).append(from + " - ").append(color, labelText);
-        if (result.estimated)
-        {
-            message.append(" (estimated)");
-        }
-        return message.append(".").build();
+        LuckSummary.Tier tier = LuckSummary.tier(result.probability);
+        Color color = toneColor(tier.tone, palette);
+        message.append("first obtained at ").append(color, kc).append(from + " - ").append(color, tier.text);
+        String pct = LuckSummary.formatPct(result.probability);
+        return message.append(result.estimated ? " (" + pct + ", estimated)." : " (" + pct + ").").build();
     }
 
-    private static String labelText(String label)
+    /** The chat's three colors over the tiers' five tones: lucky green, even blue, unlucky and dry red. */
+    private static Color toneColor(LuckSummary.Tone tone, Palette palette)
     {
-        if (label == null)
+        switch (tone)
         {
-            return null;
-        }
-        switch (label)
-        {
-            case "spooned":
-                return "spooned";
-            case "average":
-                return "average";
-            case "dry":
-                return "dry";
-            case "desert":
-                return "bone dry";
-            default:
-                return null;
-        }
-    }
-
-    private static Color labelColor(String label, Palette palette)
-    {
-        switch (label)
-        {
-            case "spooned":
+            case JACKPOT:
+            case LUCKY:
                 return palette.spooned;
-            case "average":
+            case EVEN:
                 return palette.average;
             default:
                 return palette.dry;
