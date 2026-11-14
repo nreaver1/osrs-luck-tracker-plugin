@@ -91,7 +91,7 @@ final class LuckCheckMessage
             return message.append("logged before tracking" + from + ", ")
                 .append(color, String.format(Locale.ROOT, "%,d by %,d KC", snap.quantity, snap.kc))
                 .append(" - ").append(color, tier.text)
-                .append(" (" + LuckSummary.formatPct(snap.probability) + ", estimated).").build();
+                .append(" (" + chatPct(snap.probability) + ", estimated).").build();
         }
         if (result.backfilled)
         {
@@ -110,8 +110,17 @@ final class LuckCheckMessage
         LuckSummary.Tier tier = LuckSummary.tier(result.probability);
         Color color = toneColor(tier.tone, palette);
         message.append("first obtained at ").append(color, kc).append(from + " - ").append(color, tier.text);
-        String pct = LuckSummary.formatPct(result.probability);
+        String pct = chatPct(result.probability);
         return message.append(result.estimated ? " (" + pct + ", estimated)." : " (" + pct + ").").build();
+    }
+
+    /**
+     * The probability as chat shows it: "<1%" for the whole MEGA JACKPOT
+     * tier rather than a rounded "0%", otherwise as the panel rounds it.
+     */
+    static String chatPct(double probability)
+    {
+        return probability < 0.01 ? "<1%" : LuckSummary.formatPct(probability);
     }
 
     /** The chat's three colors over the tiers' five tones: lucky green, even blue, unlucky and dry red. */

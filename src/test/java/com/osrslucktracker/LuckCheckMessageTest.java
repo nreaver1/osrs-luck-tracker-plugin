@@ -31,8 +31,12 @@ class LuckCheckMessageTest
         // The Vorki case: the backend's coarse label says "spooned", the site says JACKPOT.
         assertEquals("Soiled page: first obtained at 49 KC - JACKPOT (5%).",
             Text.removeTags(format(result(49, 0.05, "spooned", true, false, false), false, -1)));
-        assertEquals("Soiled page: first obtained at 49 KC - MEGA JACKPOT (0%).",
-            Text.removeTags(format(result(49, 0.004, "spooned", true, false, false), false, -1)));
+        // The chat builder escapes "<" as <lt> so the game prints it rather than reading a tag.
+        String mega = format(result(49, 0.004, "spooned", true, false, false), false, -1);
+        assertTrue(mega.endsWith("MEGA JACKPOT</col> (<lt>1%)."), mega);
+        // 0.8% would round to 1%, but it's still under 1%, as its tier says.
+        assertEquals("<1%", LuckCheckMessage.chatPct(0.008));
+        assertEquals("1%", LuckCheckMessage.chatPct(0.01));
         assertEquals("Soiled page: first obtained at 49 KC - even money (50%).",
             Text.removeTags(format(result(49, 0.5, "average", true, false, false), false, -1)));
         assertEquals("Soiled page: first obtained at 49 KC - bone dry (97%).",

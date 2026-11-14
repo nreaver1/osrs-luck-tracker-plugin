@@ -72,7 +72,7 @@ side panel and the website all use the same tiers:
 
 | Tier | Share of players with it by your KC |
 |---|---|
-| **MEGA JACKPOT** | under 1% |
+| **MEGA JACKPOT** | under 1% (chat shows "<1%") |
 | **JACKPOT** | 1–10% |
 | **pretty spooned** | 10–25% |
 | **a little spooned** | 25–42% |
